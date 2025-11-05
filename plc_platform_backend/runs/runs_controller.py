@@ -36,29 +36,3 @@ async def get_run(
     runs_service: Annotated[RunsService, Depends(get_runs_service)],
 ) -> Run:
     return await runs_service.find_by_id(run_id)
-
-
-@router.get("/{run_id}/assets/{depth}")
-async def get_run_assets_paths(
-    run_id: str,
-    depth: int,
-    runs_service: Annotated[RunsService, Depends(get_runs_service)],
-    background_tasks: BackgroundTasks,
-) -> FileResponse:
-    tar_archive: io.BytesIO = await runs_service.get_assets_tar_by_depth(
-        run_id, TestbenchNodeDepth(depth)
-    )
-
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".tar") as tmp:
-        tmp.write(tar_archive.getvalue())
-        tmp.flush()
-        tmp = tmp.name
-
-    background_tasks.add_task(os.unlink, tmp)
-
-    return FileResponse(
-        tmp,
-        media_type="application/octet-stream",
-        filename=f"run_{run_id}_assets_depth_{depth}.tar",
-        background=background_tasks,
-    )
