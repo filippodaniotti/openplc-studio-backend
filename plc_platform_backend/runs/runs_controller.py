@@ -62,10 +62,3 @@ async def get_run_assets_paths(
         filename=f"run_{run_id}_assets_depth_{depth}.tar",
         background=background_tasks,
     )
-
-
-@router.get("")
-async def get_all_runs(
-    runs_service: Annotated[RunsService, Depends(get_runs_service)],
-) -> list[Run]:
-    return await runs_service.get_all()
