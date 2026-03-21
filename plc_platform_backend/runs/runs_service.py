@@ -41,44 +41,37 @@ def _get_module_parameter(settings, parameter):
     return [s.value for s in settings if s.name == parameter][0]
 
 
+def _hydrate_crossfade_settings(crossfade_list: list) -> list[CrossfadeSettings]:
+    """Idrata una lista di crossfade settings da dizionari a oggetti CrossfadeSettings"""
+    result = []
+    for xf in crossfade_list:
+        crossfade_settings_cls = getattr(plctestbench.settings, xf["name"])
+        result.append(
+            crossfade_settings_cls(
+                **{xfs["name"]: xfs["value"] for xfs in xf["settings"]}
+            )
+        )
+    return result
+
+    
 def _get_hydrated_module_settings(
     settings: list[ModuleParameter], run_service: RunsService
 ):
     hydrated_module_settings = []
     for s in settings:
-        crossfade_settings: list[CrossfadeSettings] = []
-        fade_in: list[CrossfadeSettings] = []
-        crossfade_frequencies: list[int] = []
+        
         advanced_plc_band_settings: dict[
             str, list[plctestbench.plc_algorithm.PLCAlgorithm]
         ] = {}
         advanced_plc_frequencies: dict[str, list[int]] = {}
         if s.name == "crossfade":
-            for xf in s.value:
-                crossfade_settings_cls = getattr(
-                    plctestbench.settings,
-                    xf["name"],
-                )
-                crossfade_settings.append(
-                    crossfade_settings_cls(
-                        **{xfs["name"]: xfs["value"] for xfs in xf["settings"]}
-                    )
-                )
             hydrated_module_settings.append(
-                ModuleParameter(name=s.name, value=crossfade_settings)
+                ModuleParameter(name=s.name, value=_hydrate_crossfade_settings(s.value))
             )
         elif s.name == "fade_in":
-            for xf in s.value:
-                crossfade_settings_cls = getattr(
-                    plctestbench.settings,
-                    xf["name"],
-                )
-                fade_in.append(
-                    crossfade_settings_cls(
-                        **{xfs["name"]: xfs["value"] for xfs in xf["settings"]}
-                    )
-                )
-            hydrated_module_settings.append(ModuleParameter(name=s.name, value=fade_in))
+            hydrated_module_settings.append(
+                ModuleParameter(name=s.name, value=_hydrate_crossfade_settings(s.value))
+            )
         elif s.name == "crossfade_frequencies" and s.value:
             crossfade_frequencies = [int(f) for f in s.value]
             hydrated_module_settings.append(
@@ -119,12 +112,14 @@ def _get_hydrated_module_settings(
                         plctestbench.settings,
                         run_service.get_module_settings_class_name(algorithm["name"]),
                     )
+                    hydrated_algorithm_settings = _get_hydrated_module_settings(
+                        [ModuleParameter(name=as_["name"], value=as_["value"])
+                        for as_ in algorithm["settings"]],
+                        run_service
+                    )
                     advanced_plc_band_settings[band].append(
                         algorithm_settings_cls(
-                            **{
-                                as_["name"]: as_["value"]
-                                for as_ in algorithm["settings"]
-                            }
+                            **{s.name: s.value for s in hydrated_algorithm_settings}
                         )
                     )
 
