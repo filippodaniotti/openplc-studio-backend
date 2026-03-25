@@ -119,7 +119,7 @@ def _get_hydrated_module_settings(
                     )
                     advanced_plc_band_settings[band].append(
                         algorithm_settings_cls(
-                            **{s.name: s.value for s in hydrated_algorithm_settings}
+                            **{has.name: has.value for has in hydrated_algorithm_settings}
                         )
                     )
 
