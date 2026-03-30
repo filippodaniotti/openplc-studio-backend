@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from plc_platform_backend.commons.configuration.configuration import get_configuration
 from plc_platform_backend.db import get_mongodb
 from plc_platform_backend.routers import assets, modules, runs
-from plc_platform_backend.ws import get_ws_connection_manager, ws_router
+from plc_platform_backend.ws import router as ws_router
 
 
 @asynccontextmanager

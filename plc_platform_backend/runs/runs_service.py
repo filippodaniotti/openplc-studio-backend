@@ -18,6 +18,7 @@ from plctestbench.output_analyser import PEAQData, SimpleCalculatorData
 from plctestbench.plc_testbench import PLCTestbench
 from plctestbench.settings import CrossfadeSettings, OriginalAudioSettings
 from plctestbench.worker import OriginalAudio
+from redis import Redis
 
 from plc_platform_backend import actors
 from plc_platform_backend.assets.assets_models import TestbenchNodeDepth
@@ -27,6 +28,7 @@ from plc_platform_backend.assets.assets_repository import (
 )
 from plc_platform_backend.assets.assets_service import AssetsService, get_assets_service
 from plc_platform_backend.commons.configuration.configuration import get_configuration
+from plc_platform_backend.commons.redis_client import get_redis_client
 from plc_platform_backend.modules.modules_models import ModuleParameter, ModuleType
 from plc_platform_backend.runs.runs_models import Run, RunCreateDto, RunStatus
 from plc_platform_backend.runs.runs_repository import (
@@ -166,7 +168,10 @@ def _get_hydrated_module_settings(
 
 
 async def _launch_run(
-    run: Run, run_repository: RunsRepository, run_service: RunsService
+    run: Run,
+    run_repository: RunsRepository,
+    run_service: RunsService,
+    redis_client: Redis,
 ) -> None:
     original_audio_tracks = [
         (OriginalAudio, OriginalAudioSettings(track)) for track in run.tracks
@@ -265,7 +270,8 @@ async def _launch_run(
     run.status = RunStatus.COMPLETED
     await run_repository.update_run(run.id, run)
 
-    # TODO: notify the frontend that the run is completed
+    # notify frontend
+    await redis_client.publish("run:progress", run.name)
 
 
 @lru_cache
@@ -281,6 +287,7 @@ class RunsService:
         self.assets_repository: AssetsRepository = get_assets_repository()
         self.assets_service: AssetsService = get_assets_service()
         self.testbench_settings: TestbenchConfiguration = self.get_testbench_settings()
+        self.redis_client: Redis = get_redis_client()
 
     async def save_run(self, run: RunCreateDto) -> Run:
         saved_run = await self.runs_repository.create_run(run)
@@ -295,7 +302,7 @@ class RunsService:
         return [Run.from_document(run) for run in await self.runs_repository.get_all()]
 
     async def launch_run_synch(self, run: Run) -> Run:
-        await _launch_run(run, self.runs_repository, self)
+        await _launch_run(run, self.runs_repository, self, self.redis_client)
 
     async def get_assets_tar_by_depth(
         self, run_id: str, depth: TestbenchNodeDepth
