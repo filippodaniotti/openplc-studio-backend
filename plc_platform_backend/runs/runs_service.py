@@ -271,7 +271,8 @@ async def _launch_run(
     await run_repository.update_run(run.id, run)
 
     # notify frontend
-    await redis_client.publish("run:progress", run.name)
+    channel_key = "run:progress"
+    await redis_client.publish(channel_key, run.name)
 
 
 @lru_cache
