@@ -36,6 +36,12 @@ from plc_platform_backend.runs.runs_repository import (
     get_runs_repository,
 )
 
+import redis.asyncio as aioredis
+from plc_platform_backend.runs.runs_messages import RunCompletionMessage
+
+RUN_COMPLETION_CHANNEL = "run.complete"
+
+
 
 def _get_module_parameter(settings, parameter):
     return [s.value for s in settings if s.name == parameter][0]
@@ -161,6 +167,12 @@ def _get_hydrated_module_settings(
 
     return hydrated_module_settings
 
+async def _publish_run_completion(run_name: str, success: bool) -> None:
+    config = get_configuration()
+    redis_client = aioredis.from_url(config.redis_url)
+    message = RunCompletionMessage(run_name=run_name, success=success)
+    await redis_client.publish(RUN_COMPLETION_CHANNEL, message.json())
+    await redis_client.close()
 
 async def _launch_run(
     run: Run,
@@ -260,14 +272,14 @@ async def _launch_run(
         traceback.print_exception(e)
         run.status = RunStatus.FAILED
         await run_repository.update_run(run.id, run)
+        await _publish_run_completion(run.name, success=False)
         return
 
     run.status = RunStatus.COMPLETED
     await run_repository.update_run(run.id, run)
+    await _publish_run_completion(run.name, success=True)
 
-    # notify frontend
-    channel_key = "run:progress"
-    await redis_client.publish(channel_key, run.name)
+   
 
 
 @lru_cache

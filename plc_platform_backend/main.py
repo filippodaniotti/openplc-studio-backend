@@ -7,8 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from plc_platform_backend.commons.configuration.configuration import get_configuration
 from plc_platform_backend.db import get_mongodb
-from plc_platform_backend.routers import assets, modules, runs
-from plc_platform_backend.ws import router as ws_router
+from plc_platform_backend.routers import assets, modules, runs, runs_ws
 
 
 @asynccontextmanager
@@ -78,5 +77,4 @@ app.add_middleware(
 app.include_router(modules.router)
 app.include_router(runs.router)
 app.include_router(assets.router)
-
-app.include_router(ws_router)
+app.include_router(runs_ws.router)
