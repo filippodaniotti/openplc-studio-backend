@@ -37,11 +37,21 @@ from plc_platform_backend.runs.runs_repository import (
 )
 
 import redis.asyncio as aioredis
+
 from plc_platform_backend.runs.runs_messages import RunCompletionMessage
 
+import threading
+
+from plc_platform_backend.runs.runs_messages import (
+    RunCompletionMessage,
+    RunProgressMessage,
+    NodeProgress,
+)
+from plc_platform_backend.runs.runs_progress import InterceptableTqdm
+
 RUN_COMPLETION_CHANNEL = "run.complete"
-
-
+RUN_PROGRESS_CHANNEL = "run.progress"
+_PROGRESS_POLL_INTERVAL = 0.1  # secondi
 
 def _get_module_parameter(settings, parameter):
     return [s.value for s in settings if s.name == parameter][0]
@@ -174,11 +184,17 @@ async def _publish_run_completion(run_name: str, success: bool) -> None:
     await redis_client.publish(RUN_COMPLETION_CHANNEL, message.json())
     await redis_client.close()
 
+async def _publish_run_progress(run_name: str, nodes: list[NodeProgress]) -> None:
+    config = get_configuration()
+    redis_client = aioredis.from_url(config.redis_url)
+    message = RunProgressMessage(run_name=run_name, nodes=nodes)
+    await redis_client.publish(RUN_PROGRESS_CHANNEL, message.model_dump_json())
+    await redis_client.close()
+
 async def _launch_run(
     run: Run,
     run_repository: RunsRepository,
     run_service: RunsService,
-    redis_client: Redis,
 ) -> None:
     original_audio_tracks = [
         (OriginalAudio, OriginalAudioSettings(track)) for track in run.tracks
@@ -254,6 +270,10 @@ async def _launch_run(
             (cls_, settings_cls(**{s.name: s.value for s in module.settings}))
         )
 
+
+    testbench_settings = run_service.testbench_settings
+    testbench_settings.progress_monitor = lambda caller: InterceptableTqdm
+
     testbench = PLCTestbench(
         original_audio_tracks,
         packet_loss_simulators,
@@ -265,11 +285,38 @@ async def _launch_run(
     run.status = RunStatus.RUNNING
     run.testbench_internal_id = testbench.run_id
     await run_repository.update_run(run.id, run)
+    # Esegue il testbench in un thread separato per non bloccare l'event loop di FastAPI
+    run_exception: Exception | None = None
 
-    try:
-        testbench.run()
-    except Exception as e:
-        traceback.print_exception(e)
+    def _run_thread():
+        nonlocal run_exception
+        try:
+            testbench.run()
+        except Exception as e:
+            run_exception = e
+        finally:
+            InterceptableTqdm.reset_all()
+
+    thread = threading.Thread(target=_run_thread, daemon=True)
+    thread.start()
+
+    # Polling: campiona il progresso ogni 100ms finché il thread è vivo
+    while thread.is_alive():
+        snapshot = InterceptableTqdm.get_all()
+        if snapshot:
+            nodes = [
+                NodeProgress(description=desc, current=current, total=total)
+                for desc, current, total in (
+                    pbar.get_progress() for pbar in snapshot.values()
+                )
+            ]
+            await _publish_run_progress(run.name, nodes)
+        await asyncio.sleep(_PROGRESS_POLL_INTERVAL)
+
+    thread.join()
+
+    if run_exception is not None:
+        traceback.print_exception(run_exception)
         run.status = RunStatus.FAILED
         await run_repository.update_run(run.id, run)
         await _publish_run_completion(run.name, success=False)
