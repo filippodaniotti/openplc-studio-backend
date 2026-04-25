@@ -49,9 +49,13 @@ from plc_platform_backend.runs.runs_messages import (
 )
 from plc_platform_backend.runs.runs_progress import InterceptableTqdm
 
-from plc_platform_backend.runs.runs_ws import RUN_COMPLETION_CHANNEL, RUN_PROGRESS_CHANNEL
+from plc_platform_backend.runs.runs_ws import (
+    RUN_COMPLETION_CHANNEL,
+    RUN_PROGRESS_CHANNEL,
+)
 
-_PROGRESS_POLL_INTERVAL = 0.1 #secundi
+_PROGRESS_POLL_INTERVAL = 0.1  # secundi
+
 
 def _get_module_parameter(settings, parameter):
     return [s.value for s in settings if s.name == parameter][0]
@@ -69,13 +73,13 @@ def _hydrate_crossfade_settings(crossfade_list: list) -> list[CrossfadeSettings]
         )
     return result
 
-    
+
 def _get_hydrated_module_settings(
     settings: list[ModuleParameter], run_service: RunsService
 ):
     hydrated_module_settings = []
     for s in settings:
-        
+
         advanced_plc_band_settings: dict[
             str, list[plctestbench.plc_algorithm.PLCAlgorithm]
         ] = {}
@@ -129,13 +133,18 @@ def _get_hydrated_module_settings(
                         run_service.get_module_settings_class_name(algorithm["name"]),
                     )
                     hydrated_algorithm_settings = _get_hydrated_module_settings(
-                        [ModuleParameter(name=as_["name"], value=as_["value"])
-                        for as_ in algorithm["settings"]],
-                        run_service
+                        [
+                            ModuleParameter(name=as_["name"], value=as_["value"])
+                            for as_ in algorithm["settings"]
+                        ],
+                        run_service,
                     )
                     advanced_plc_band_settings[band].append(
                         algorithm_settings_cls(
-                            **{has.name: has.value for has in hydrated_algorithm_settings}
+                            **{
+                                has.name: has.value
+                                for has in hydrated_algorithm_settings
+                            }
                         )
                     )
 
@@ -177,15 +186,20 @@ def _get_hydrated_module_settings(
 
     return hydrated_module_settings
 
-async def _publish_run_completion(run_name: str, success: bool, redis_client: aioredis.Redis) -> None:
+
+async def _publish_run_completion(
+    run_name: str, success: bool, redis_client: aioredis.Redis
+) -> None:
     message = RunCompletionMessage(run_name=run_name, success=success)
     await redis_client.publish(RUN_COMPLETION_CHANNEL, message.model_dump_json())
-    
 
-async def _publish_run_progress(run_name: str, nodes: list[NodeProgress], redis_client: aioredis.Redis) -> None:
+
+async def _publish_run_progress(
+    run_name: str, nodes: list[NodeProgress], redis_client: aioredis.Redis
+) -> None:
     message = RunProgressMessage(run_name=run_name, nodes=nodes)
     await redis_client.publish(RUN_PROGRESS_CHANNEL, message.model_dump_json())
-    
+
 
 async def _launch_run(
     run: Run,
@@ -267,7 +281,6 @@ async def _launch_run(
             (cls_, settings_cls(**{s.name: s.value for s in module.settings}))
         )
 
-
     testbench_settings = run_service.testbench_settings
     testbench_settings.progress_monitor = lambda caller: InterceptableTqdm
 
@@ -307,7 +320,7 @@ async def _launch_run(
                     pbar.get_progress() for pbar in snapshot.values()
                 )
             ]
-            await _publish_run_progress(run.name, nodes,redis_client)
+            await _publish_run_progress(run.name, nodes, redis_client)
         await asyncio.sleep(_PROGRESS_POLL_INTERVAL)
 
     thread.join()
@@ -316,7 +329,9 @@ async def _launch_run(
         traceback.print_exception(run_exception)
         run.status = RunStatus.FAILED
         await run_repository.update_run(run.id, run)
-        await _publish_run_completion(run.name, success=False, redis_client=redis_client)
+        await _publish_run_completion(
+            run.name, success=False, redis_client=redis_client
+        )
         await redis_client.aclose()
         return
 
@@ -325,8 +340,6 @@ async def _launch_run(
     await _publish_run_completion(run.name, success=True, redis_client=redis_client)
 
     await redis_client.aclose()
-
-   
 
 
 @lru_cache
