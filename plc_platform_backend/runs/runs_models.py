@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import Enum
-from typing import Optional
+from typing import Optional, Literal
 
 from pydantic import BaseModel
 
@@ -59,3 +59,27 @@ class Run(BaseModel):
             tracks=document.tracks,
             modules=document.modules,
         )
+
+
+class NodeProgress(BaseModel):
+    description: str
+    current: int
+    total: int | None
+
+    @property
+    def percentage(self) -> float | None:
+        if self.total and self.total > 0:
+            return round((self.current / self.total) * 100, 1)
+        return None
+
+
+class RunCompletionMessage(BaseModel):
+    type: Literal["run.complete"] = "run.complete"
+    run_name: str
+    success: bool
+
+
+class RunProgressMessage(BaseModel):
+    type: Literal["run.progress"] = "run.progress"
+    run_name: str
+    nodes: list[NodeProgress]

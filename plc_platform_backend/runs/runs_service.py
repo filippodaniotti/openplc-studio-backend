@@ -30,7 +30,7 @@ from plc_platform_backend.assets.assets_service import AssetsService, get_assets
 from plc_platform_backend.commons.configuration.configuration import get_configuration
 from plc_platform_backend.commons.redis_client import get_redis_client
 from plc_platform_backend.modules.modules_models import ModuleParameter, ModuleType
-from plc_platform_backend.runs.runs_models import Run, RunCreateDto, RunStatus
+from plc_platform_backend.runs.runs_models import ( Run, RunCreateDto, RunStatus, RunCompletionMessage, RunProgressMessage, NodeProgress,)
 from plc_platform_backend.runs.runs_repository import (
     RunsRepository,
     get_runs_repository,
