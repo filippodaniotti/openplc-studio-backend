@@ -47,7 +47,7 @@ from plc_platform_backend.runs.runs_messages import (
     RunProgressMessage,
     NodeProgress,
 )
-from plc_platform_backend.runs.runs_progress import InterceptableTqdm
+from plc_platform_backend.commons.interceptable_tqdm import InterceptableTqdm
 
 from plc_platform_backend.runs.runs_ws import (
     RUN_COMPLETION_CHANNEL,
