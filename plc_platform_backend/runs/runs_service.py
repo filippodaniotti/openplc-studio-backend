@@ -49,9 +49,9 @@ from plc_platform_backend.runs.runs_messages import (
 )
 from plc_platform_backend.runs.runs_progress import InterceptableTqdm
 
-RUN_COMPLETION_CHANNEL = "run.complete"
-RUN_PROGRESS_CHANNEL = "run.progress"
-_PROGRESS_POLL_INTERVAL = 0.1  # secondi
+from plc_platform_backend.runs.runs_ws import RUN_COMPLETION_CHANNEL, RUN_PROGRESS_CHANNEL
+
+_PROGRESS_POLL_INTERVAL = 0.1 #secundi
 
 def _get_module_parameter(settings, parameter):
     return [s.value for s in settings if s.name == parameter][0]
@@ -177,25 +177,22 @@ def _get_hydrated_module_settings(
 
     return hydrated_module_settings
 
-async def _publish_run_completion(run_name: str, success: bool) -> None:
-    config = get_configuration()
-    redis_client = aioredis.from_url(config.redis_url)
+async def _publish_run_completion(run_name: str, success: bool, redis_client: aioredis.Redis) -> None:
     message = RunCompletionMessage(run_name=run_name, success=success)
-    await redis_client.publish(RUN_COMPLETION_CHANNEL, message.json())
-    await redis_client.close()
+    await redis_client.publish(RUN_COMPLETION_CHANNEL, message.model_dump_json())
+    
 
-async def _publish_run_progress(run_name: str, nodes: list[NodeProgress]) -> None:
-    config = get_configuration()
-    redis_client = aioredis.from_url(config.redis_url)
+async def _publish_run_progress(run_name: str, nodes: list[NodeProgress], redis_client: aioredis.Redis) -> None:
     message = RunProgressMessage(run_name=run_name, nodes=nodes)
     await redis_client.publish(RUN_PROGRESS_CHANNEL, message.model_dump_json())
-    await redis_client.close()
+    
 
 async def _launch_run(
     run: Run,
     run_repository: RunsRepository,
     run_service: RunsService,
 ) -> None:
+    redis_client = aioredis.from_url(get_configuration().redis_url)
     original_audio_tracks = [
         (OriginalAudio, OriginalAudioSettings(track)) for track in run.tracks
     ]
@@ -310,7 +307,7 @@ async def _launch_run(
                     pbar.get_progress() for pbar in snapshot.values()
                 )
             ]
-            await _publish_run_progress(run.name, nodes)
+            await _publish_run_progress(run.name, nodes,redis_client)
         await asyncio.sleep(_PROGRESS_POLL_INTERVAL)
 
     thread.join()
@@ -319,12 +316,15 @@ async def _launch_run(
         traceback.print_exception(run_exception)
         run.status = RunStatus.FAILED
         await run_repository.update_run(run.id, run)
-        await _publish_run_completion(run.name, success=False)
+        await _publish_run_completion(run.name, success=False, redis_client=redis_client)
+        await redis_client.aclose()
         return
 
     run.status = RunStatus.COMPLETED
     await run_repository.update_run(run.id, run)
-    await _publish_run_completion(run.name, success=True)
+    await _publish_run_completion(run.name, success=True, redis_client=redis_client)
+
+    await redis_client.aclose()
 
    
 
