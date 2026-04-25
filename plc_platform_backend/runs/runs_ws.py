@@ -1,4 +1,3 @@
-
 import redis.asyncio as aioredis
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from plc_platform_backend.commons.configuration.configuration import get_configuration
@@ -8,6 +7,7 @@ router = APIRouter()
 
 RUN_COMPLETION_CHANNEL = "run.complete"
 RUN_PROGRESS_CHANNEL = "run.progress"
+
 
 @router.websocket("/ws/runs")
 async def runs_websocket(websocket: WebSocket) -> None:
@@ -27,6 +27,3 @@ async def runs_websocket(websocket: WebSocket) -> None:
     finally:
         await pubsub.unsubscribe(RUN_COMPLETION_CHANNEL, RUN_PROGRESS_CHANNEL)
         await pubsub.close()
-
-
-
