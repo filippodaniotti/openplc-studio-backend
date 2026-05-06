@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import io
 import json
 import os
@@ -361,8 +362,8 @@ class RunsService:
 
     async def save_run(self, run: RunCreateDto) -> Run:
         saved_run = await self.runs_repository.create_run(run)
-        actors.launch_run.send(run_id=saved_run.id)
-        # await self.launch_run_synch(saved_run)
+        #actors.launch_run.send(run_id=saved_run.id)
+        await self.launch_run_synch(saved_run)
         return Run.from_document(saved_run)
 
     async def find_by_id(self, run_id: str) -> Run:
@@ -372,7 +373,7 @@ class RunsService:
         return [Run.from_document(run) for run in await self.runs_repository.get_all()]
 
     async def launch_run_synch(self, run: Run) -> Run:
-        await _launch_run(run, self.runs_repository, self, self.redis_client)
+        await _launch_run(run, self.runs_repository, self)
 
     async def get_assets_tar_by_depth(
         self, run_id: str, depth: TestbenchNodeDepth
