@@ -75,11 +75,13 @@ class NodeProgress(BaseModel):
 
 class RunCompletionMessage(BaseModel):
     type: Literal["run.complete"] = "run.complete"
+    run_id: str
     run_name: str
     success: bool
 
 
 class RunProgressMessage(BaseModel):
     type: Literal["run.progress"] = "run.progress"
+    run_id: str
     run_name: str
     nodes: list[NodeProgress]
