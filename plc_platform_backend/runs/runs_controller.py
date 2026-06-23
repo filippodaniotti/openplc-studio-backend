@@ -37,6 +37,18 @@ async def get_run(
 ) -> Run:
     return await runs_service.find_by_id(run_id)
 
+@router.get("/{run_id}/config/export")
+async def export_run_config(
+    run_id: str,
+    runs_service: Annotated[RunsService, Depends(get_runs_service)],
+) -> StreamingResponse:
+    config_json: str = await runs_service.export_run_config(run_id)
+    return StreamingResponse(
+        io.BytesIO(config_json.encode("utf-8")),
+        media_type="application/json",
+        headers={"Content-Disposition": f"attachment; filename=run_{run_id}_config.json"},
+    )
+
 
 @router.get("/{run_id}/assets/{depth}")
 async def get_run_assets_paths(

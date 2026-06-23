@@ -457,3 +457,24 @@ class RunsService:
             return "/".join(
                 [original_track, sample_mask, reconstructed_track, output_analysis]
             )
+    
+    async def export_run_config(self, run_id: str) -> str:
+        run = await self.find_by_id(run_id)
+        config = {
+            "name": run.name,
+            "tracks": run.tracks,
+            "modules": {
+                module_type: [
+                    {
+                        "name": module.name,
+                        "settings": [
+                            {"name": s.name, "value": s.value}
+                            for s in module.settings
+                        ],
+                    }
+                    for module in modules
+                ]
+                for module_type, modules in run.modules.items()
+            },
+        }
+        return json.dumps(config, indent=2)
