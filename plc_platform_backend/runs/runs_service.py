@@ -57,6 +57,10 @@ from plc_platform_backend.runs.runs_ws import (
     RUN_PROGRESS_CHANNEL,
 )
 
+from plc_platform_backend.modules.modules_service import ModuleService, get_modules_service
+from plc_platform_backend.runs.runs_models import RunConfigDto, RunConfigValidationError
+from fastapi import HTTPException
+
 _PROGRESS_POLL_INTERVAL = 0.1  # secundi
 
 
@@ -478,3 +482,39 @@ class RunsService:
             },
         }
         return json.dumps(config, indent=2)
+    
+    ## Validation of run configuration
+    async def validate_run_config(self, config: RunConfigDto) -> RunConfigDto:
+        modules_service: ModuleService = get_modules_service()
+        errors: list[RunConfigValidationError] = []
+
+        for module_type, modules in config.modules.items():
+            available = modules_service.get_all_modules_by_type(module_type)
+            available_names = [m.name for m in available]
+
+            for module in modules:
+                # Check if the module name is available
+                if module.name not in available_names:
+                    errors.append(RunConfigValidationError(
+                        module_type=module_type,
+                        module_name=module.name,
+                        error="Modulo non trovato"
+                    ))
+                    continue
+                # Check if the module parameters are valid
+                available_module = next(m for m in available if m.name == module.name)
+                expected_params = [p.name for p in available_module.settings]
+                actual_params = [p.name for p in module.settings]
+
+                # Check if the actual parameters match the expected parameters
+                if actual_params != expected_params:
+                    errors.append(RunConfigValidationError(
+                        module_type=module_type,
+                        module_name=module.name,
+                        error=f"Parametri non validi. Attesi: {expected_params}, ricevuti: {actual_params}"
+                    ))
+        # If there are any errors, raise an HTTPException with the details
+        if errors:
+            raise HTTPException(status_code=422, detail=[e.model_dump() for e in errors])
+
+        return config    

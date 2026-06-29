@@ -10,6 +10,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from plc_platform_backend.assets.assets_models import TestbenchNodeDepth
 from plc_platform_backend.runs.runs_models import Run, RunCreateDto
 from plc_platform_backend.runs.runs_service import RunsService, get_runs_service
+from plc_platform_backend.runs.runs_models import Run, RunCreateDto, RunConfigDto, RunConfigValidationError
 
 router = APIRouter(
     prefix="/runs",
@@ -81,3 +82,13 @@ async def get_all_runs(
     runs_service: Annotated[RunsService, Depends(get_runs_service)],
 ) -> list[Run]:
     return await runs_service.get_all()
+
+
+
+#controller for validating run config
+@router.post("/config/validate")
+async def validate_run_config(
+    config: RunConfigDto,
+    runs_service: Annotated[RunsService, Depends(get_runs_service)],
+) -> RunConfigDto:
+    return await runs_service.validate_run_config(config)

@@ -85,3 +85,16 @@ class RunProgressMessage(BaseModel):
     run_id: str
     run_name: str
     nodes: list[NodeProgress]
+
+#Model for RunConfigDto
+class RunConfigDto(BaseModel):
+    name: str
+    tracks: list[str]
+    modules: dict[ModuleType, list[Module]]
+
+#Model for RunConfigValidationError
+class RunConfigValidationError(BaseModel):
+    module_type: str
+    module_name: str
+    error: str
+
