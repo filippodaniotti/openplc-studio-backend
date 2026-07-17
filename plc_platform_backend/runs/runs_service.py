@@ -296,11 +296,7 @@ async def _launch_run(
     )
 
     # Recupera i nodi dell'albero di esecuzione e assegna gli id ai moduli
-    testbench_nodes = testbench.get_nodes_by_depth(testbench.data_manager.root_nodes[0])
-    pls_nodes = testbench_nodes[1]
-    plc_nodes = testbench_nodes[2]
-    oa_nodes = testbench_nodes[3]
-
+    # Un root_node per ogni traccia: accumuliamo gli id su tutte le tracce
     pls_modules = run.modules[ModuleType.PacketLossSimulator]
     plc_modules = run.modules[ModuleType.PLCAlgorithm]
     oa_modules = run.modules[ModuleType.OutputAnalyser]
@@ -308,18 +304,31 @@ async def _launch_run(
     n_pls = len(pls_modules)
     n_plc = len(plc_modules)
 
-    for module, node in zip(pls_modules, pls_nodes):
-        module.node_ids = [node.get_id()]
+    for module in pls_modules:
+        module.node_ids = []
+    for module in plc_modules:
+        module.node_ids = []
+    for module in oa_modules:
+        module.node_ids = []
 
-    plc_step = n_pls
-    for i, module in enumerate(plc_modules):
-        start = i * plc_step
-        module.node_ids = [n.get_id() for n in plc_nodes[start : start + plc_step]]
+    for root_node in testbench.data_manager.root_nodes:
+        testbench_nodes = testbench.get_nodes_by_depth(root_node)
+        pls_nodes = testbench_nodes[1]
+        plc_nodes = testbench_nodes[2]
+        oa_nodes = testbench_nodes[3]
 
-    oa_step = n_pls * n_plc
-    for i, module in enumerate(oa_modules):
-        start = i * oa_step
-        module.node_ids = [n.get_id() for n in oa_nodes[start : start + oa_step]]
+        for module, node in zip(pls_modules, pls_nodes):
+            module.node_ids.append(node.get_id())
+
+        plc_step = n_pls
+        for i, module in enumerate(plc_modules):
+            start = i * plc_step
+            module.node_ids += [n.get_id() for n in plc_nodes[start : start + plc_step]]
+
+        oa_step = n_pls * n_plc
+        for i, module in enumerate(oa_modules):
+            start = i * oa_step
+            module.node_ids += [n.get_id() for n in oa_nodes[start : start + oa_step]]
 
     run.status = RunStatus.RUNNING
     run.testbench_internal_id = testbench.run_id
