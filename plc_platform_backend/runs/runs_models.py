@@ -63,6 +63,7 @@ class Run(BaseModel):
 
 class NodeProgress(BaseModel):
     description: str
+    node_id: str | None = None
     current: int
     total: int | None
 

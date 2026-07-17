@@ -7,6 +7,8 @@ from pydantic import BaseModel
 
 from plc_platform_backend.commons.base_document import BaseDocument
 
+from pydantic import BaseModel, Field
+
 
 class ModuleType(str, Enum):
     PacketLossSimulator = "PacketLossSimulator"
@@ -27,7 +29,7 @@ class ModuleParameterSpec(BaseModel):
     name: str
     type: str
     default: Any
-    values: Optional[list[Any]]
+    values: Optional[list[Any]] = None
 
 
 class ModuleParameter(BaseModel):
@@ -44,6 +46,7 @@ class ModuleParameter(BaseModel):
 
 class ModuleDocument(BaseDocument):
     name: str
+    node_ids: list[str] = Field(default_factory=lambda: [])
     settings: list[ModuleParameterDocument]
 
 
@@ -54,6 +57,7 @@ class ModuleSpec(BaseModel):
 
 class Module(BaseModel):
     name: str
+    node_ids: list[str] = Field(default_factory=lambda: [])
     settings: list[ModuleParameter]
 
     @staticmethod
