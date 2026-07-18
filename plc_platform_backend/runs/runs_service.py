@@ -299,6 +299,41 @@ async def _launch_run(
         run_service.testbench_settings,
     )
 
+    # Recupera i nodi dell'albero di esecuzione e assegna gli id ai moduli
+    # Un root_node per ogni traccia: accumuliamo gli id su tutte le tracce
+    pls_modules = run.modules[ModuleType.PacketLossSimulator]
+    plc_modules = run.modules[ModuleType.PLCAlgorithm]
+    oa_modules = run.modules[ModuleType.OutputAnalyser]
+
+    n_pls = len(pls_modules)
+    n_plc = len(plc_modules)
+
+    for module in pls_modules:
+        module.node_ids = []
+    for module in plc_modules:
+        module.node_ids = []
+    for module in oa_modules:
+        module.node_ids = []
+
+    for root_node in testbench.data_manager.root_nodes:
+        testbench_nodes = testbench.get_nodes_by_depth(root_node)
+        pls_nodes = testbench_nodes[1]
+        plc_nodes = testbench_nodes[2]
+        oa_nodes = testbench_nodes[3]
+
+        for module, node in zip(pls_modules, pls_nodes):
+            module.node_ids.append(node.get_id())
+
+        plc_step = n_pls
+        for i, module in enumerate(plc_modules):
+            start = i * plc_step
+            module.node_ids += [n.get_id() for n in plc_nodes[start : start + plc_step]]
+
+        oa_step = n_pls * n_plc
+        for i, module in enumerate(oa_modules):
+            start = i * oa_step
+            module.node_ids += [n.get_id() for n in oa_nodes[start : start + oa_step]]
+
     run.status = RunStatus.RUNNING
     run.testbench_internal_id = testbench.run_id
     await run_repository.update_run(run.id, run)
@@ -322,7 +357,12 @@ async def _launch_run(
         snapshot = InterceptableTqdm.get_all()
         if snapshot:
             nodes = [
-                NodeProgress(description=desc, current=current, total=total)
+                NodeProgress(
+                    description=desc.split("|")[0],
+                    node_id=desc.split("|")[1] if "|" in desc else None,
+                    current=current,
+                    total=total,
+                )
                 for desc, current, total in (
                     pbar.get_progress() for pbar in snapshot.values()
                 )
@@ -336,13 +376,17 @@ async def _launch_run(
         traceback.print_exception(run_exception)
         run.status = RunStatus.FAILED
         await run_repository.update_run(run.id, run)
-        await _publish_run_completion(run.id, run.name, success=False, redis_client=redis_client)
+        await _publish_run_completion(
+            run.id, run.name, success=False, redis_client=redis_client
+        )
         await redis_client.aclose()
         return
 
     run.status = RunStatus.COMPLETED
     await run_repository.update_run(run.id, run)
-    await _publish_run_completion(run.id, run.name, success=True, redis_client=redis_client)
+    await _publish_run_completion(
+        run.id, run.name, success=True, redis_client=redis_client
+    )
 
     await redis_client.aclose()
 
@@ -364,7 +408,7 @@ class RunsService:
 
     async def save_run(self, run: RunCreateDto) -> Run:
         saved_run = await self.runs_repository.create_run(run)
-        #actors.launch_run.send(run_id=saved_run.id)
+        # actors.launch_run.send(run_id=saved_run.id)
         await self.launch_run_synch(saved_run)
         return Run.from_document(saved_run)
 
