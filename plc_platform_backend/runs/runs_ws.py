@@ -1,7 +1,9 @@
 import asyncio
 import json
+
 import redis.asyncio as aioredis
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+
 from plc_platform_backend.commons.configuration.configuration import get_configuration
 
 router = APIRouter()
