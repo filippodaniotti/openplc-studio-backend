@@ -23,11 +23,15 @@ async def runs_websocket(websocket: WebSocket) -> None:
     async def receive_run_id():
         nonlocal run_id
         try:
-            data = await websocket.receive_text()
-            payload = json.loads(data)
-            run_id = payload.get("run_id")
+            while True:
+                data = await websocket.receive_text()
+                payload = json.loads(data)
+                run_id = payload.get("run_id")
+        except WebSocketDisconnect:
+            pass
         except Exception:
             pass
+            
 
     async def forward_messages():
         try:

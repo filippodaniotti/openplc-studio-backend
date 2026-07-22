@@ -51,7 +51,10 @@ from plc_platform_backend.runs.runs_ws import (
     RUN_PROGRESS_CHANNEL,
 )
 
-from plc_platform_backend.modules.modules_service import ModuleService, get_modules_service
+from plc_platform_backend.modules.modules_service import (
+    ModuleService,
+    get_modules_service,
+)
 from plc_platform_backend.runs.runs_models import RunConfigDto, RunConfigValidationError
 from fastapi import HTTPException
 
@@ -77,6 +80,7 @@ def _seed_progress_state(testbench: PLCTestbench) -> dict[str, NodeProgress]:
                     total=None,
                 )
     return progress_state
+
 
 def _get_module_parameter(settings, parameter):
     return [s.value for s in settings if s.name == parameter][0]
@@ -365,8 +369,6 @@ async def _launch_run(
             testbench.run()
         except Exception as e:
             run_exception = e
-        finally:
-            InterceptableTqdm.reset_all()
 
     thread = threading.Thread(target=_run_thread, daemon=True)
     thread.start()
@@ -399,13 +401,46 @@ async def _launch_run(
                 current=current,
                 total=total,
             )
-
+        active_descs = [(pbar.desc, pbar.n, pbar.total) for pbar in active.values()]
+        print(f"[DEBUG] active_descs={active_descs} closed={closed}")
         await _publish_run_progress(
             run.id, run.name, list(progress_state.values()), redis_client
         )
         await asyncio.sleep(_PROGRESS_POLL_INTERVAL)
 
     thread.join()
+
+    # Final update after the thread has finished, to catch any last progress updates
+    active = InterceptableTqdm.get_all()
+    closed = InterceptableTqdm.get_all_closed()
+
+    for desc, current, total in (pbar.get_progress() for pbar in active.values()):
+        if "|" not in desc:
+            continue
+        description, _, node_id = desc.partition("|")
+        if not node_id:
+            continue
+        progress_state[node_id] = NodeProgress(
+            description=description,
+            node_id=node_id,
+            current=current,
+            total=total,
+        )
+
+    for node_id, (desc, current, total) in closed.items():
+        description = desc.split("|", 1)[0] if "|" in desc else desc
+        progress_state[node_id] = NodeProgress(
+            description=description,
+            node_id=node_id,
+            current=current,
+            total=total,
+        )
+
+    await _publish_run_progress(
+        run.id, run.name, list(progress_state.values()), redis_client
+    )
+
+    InterceptableTqdm.reset_all()
 
     if run_exception is not None:
         traceback.print_exception(run_exception)
@@ -540,7 +575,7 @@ class RunsService:
             return "/".join(
                 [original_track, sample_mask, reconstructed_track, output_analysis]
             )
-    
+
     async def export_run_config(self, run_id: str) -> str:
         run = await self.find_by_id(run_id)
         config = {
@@ -551,8 +586,7 @@ class RunsService:
                     {
                         "name": module.name,
                         "settings": [
-                            {"name": s.name, "value": s.value}
-                            for s in module.settings
+                            {"name": s.name, "value": s.value} for s in module.settings
                         ],
                     }
                     for module in modules
@@ -561,7 +595,7 @@ class RunsService:
             },
         }
         return json.dumps(config, indent=2)
-    
+
     ## Validation of run configuration
     async def validate_run_config(self, config: RunConfigDto) -> RunConfigDto:
         modules_service: ModuleService = get_modules_service()
@@ -574,11 +608,13 @@ class RunsService:
             for module in modules:
                 # Check if the module name is available
                 if module.name not in available_names:
-                    errors.append(RunConfigValidationError(
-                        module_type=module_type,
-                        module_name=module.name,
-                        error="Modulo non trovato"
-                    ))
+                    errors.append(
+                        RunConfigValidationError(
+                            module_type=module_type,
+                            module_name=module.name,
+                            error="Modulo non trovato",
+                        )
+                    )
                     continue
                 # Check if the module parameters are valid
                 available_module = next(m for m in available if m.name == module.name)
@@ -587,13 +623,17 @@ class RunsService:
 
                 # Check if the actual parameters match the expected parameters
                 if actual_params != expected_params:
-                    errors.append(RunConfigValidationError(
-                        module_type=module_type,
-                        module_name=module.name,
-                        error=f"Parametri non validi. Attesi: {expected_params}, ricevuti: {actual_params}"
-                    ))
+                    errors.append(
+                        RunConfigValidationError(
+                            module_type=module_type,
+                            module_name=module.name,
+                            error=f"Parametri non validi. Attesi: {expected_params}, ricevuti: {actual_params}",
+                        )
+                    )
         # If there are any errors, raise an HTTPException with the details
         if errors:
-            raise HTTPException(status_code=422, detail=[e.model_dump() for e in errors])
+            raise HTTPException(
+                status_code=422, detail=[e.model_dump() for e in errors]
+            )
 
-        return config    
+        return config
