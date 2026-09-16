@@ -1,0 +1,142 @@
+# syntax=docker/dockerfile:1
+
+# =============================================================================
+# Production image for plc-platform-backend
+#
+# Build context MUST be the repository root, because the image depends on the
+# vendored ../plc-testbench package (path dependency) and its dl_models folder:
+#
+#   docker build -f plc-platform-backend/.docker/Dockerfile.prod \
+#     -t plc-platform/backend:prod .
+#
+# The same image runs both production roles:
+#   API:    docker run ... plc-platform/backend:prod
+#   Worker: docker run -e SERVICE_ROLE=worker ... plc-platform/backend:prod
+#
+# Multi-stage build:
+#   1. python-builder -> Python dependencies in a portable virtualenv
+#   2. peaq-builder   -> gstpeaq binary and gstreamer plugin
+#   3. runtime        -> slim, CPU-only, non-root image
+# =============================================================================
+
+# Debian 11 (bullseye) reached LTS end-of-life and was moved to the Debian
+# archive, so its security mirrors return 404 for the packages baked into the
+# old base images. Use the current supported Bookworm (Debian 12) base for
+# every stage so the Python ABI and the GStreamer ABI stay aligned.
+ARG PYTHON_VERSION=3.11-slim-bookworm
+ARG DEBIAN_VERSION=12-slim
+
+# -----------------------------------------------------------------------------
+# Stage 1: Python dependencies
+# -----------------------------------------------------------------------------
+FROM python:${PYTHON_VERSION} AS python-builder
+
+ENV PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_DEFAULT_TIMEOUT=60 \
+    PIP_RETRIES=10 \
+    POETRY_NO_INTERACTION=1 \
+    POETRY_VIRTUALENVS_CREATE=false \
+    POETRY_REQUESTS_TIMEOUT=120 \
+    VIRTUAL_ENV=/opt/venv \
+    PATH="/opt/venv/bin:${PATH}"
+
+# Toolchain required to build the git-based burg-plc extension.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential gcc g++ make cmake git ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN python -m venv /opt/venv
+RUN pip install --timeout 60 --retries 10 poetry==2.0.1
+
+WORKDIR /app/backend
+
+# Poetry has to resolve the full dependency graph up front, and that graph
+# includes the editable path dependency ../plc-testbench. The path dependency
+# therefore has to be present before the first `poetry install`.
+COPY plc-platform-backend/pyproject.toml plc-platform-backend/poetry.lock ./
+COPY plc-testbench /app/plc-testbench
+
+# BuildKit cache keeps downloaded wheels around across rebuilds, so changes to
+# plc-testbench sources do not force a full re-download.
+RUN --mount=type=cache,target=/root/.cache/pypoetry,sharing=locked \
+    poetry install --only main --no-root
+
+# -----------------------------------------------------------------------------
+# Stage 2: gstpeaq (PEAQ perceptual metric)
+# -----------------------------------------------------------------------------
+FROM debian:${DEBIAN_VERSION} AS peaq-builder
+
+RUN apt-get update && apt-get install -y \
+    libgstreamer1.0-dev \
+    libgstreamer-plugins-base1.0-dev libgstreamer-plugins-bad1.0-dev \
+    gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
+    gstreamer1.0-plugins-bad gstreamer1.0-plugins-ugly \
+    gstreamer1.0-libav gstreamer1.0-tools gstreamer1.0-x \
+    gstreamer1.0-alsa gstreamer1.0-gl gstreamer1.0-gtk3 \
+    gstreamer1.0-qt5 gstreamer1.0-pulseaudio \
+    git gtk-doc-tools git2cl automake libtool \
+    build-essential autoconf pkg-config m4 ca-certificates
+
+RUN git clone https://github.com/HSU-ANT/gstpeaq.git gstpeaq && \
+    cd gstpeaq && \
+    aclocal && autoheader && ./autogen.sh && \
+    sed -i 's/SUBDIRS = src doc/SUBDIRS = src/' Makefile.am && \
+    ./configure --libdir=/usr/lib && automake && make && make install
+
+# -----------------------------------------------------------------------------
+# Stage 3: runtime
+# -----------------------------------------------------------------------------
+FROM python:${PYTHON_VERSION} AS runtime
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PATH="/opt/venv/bin:${PATH}" \
+    PYTHONPATH=/app/backend \
+    SERVICE_ROLE=api
+
+# Runtime-only gstreamer/audio/native dependencies.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        libgstreamer1.0-0 \
+        libgstreamer-plugins-base1.0-0 \
+        libgstreamer-plugins-bad1.0-0 \
+        gstreamer1.0-plugins-base \
+        gstreamer1.0-plugins-good \
+        gstreamer1.0-plugins-bad \
+        gstreamer1.0-plugins-ugly \
+        gstreamer1.0-libav \
+        gstreamer1.0-tools \
+        gstreamer1.0-x \
+        gstreamer1.0-alsa \
+        gstreamer1.0-gl \
+        gstreamer1.0-gtk3 \
+        gstreamer1.0-pulseaudio \
+        libsndfile1 \
+        libgomp1 \
+        ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=python-builder /opt/venv /opt/venv
+COPY --from=peaq-builder /usr/lib/gstreamer-1.0/ /usr/lib/gstreamer-1.0/
+COPY --from=peaq-builder /usr/local/bin/peaq /usr/local/bin/peaq
+
+COPY plc-testbench /app/plc-testbench
+COPY plc-platform-backend /app/backend
+
+RUN groupadd --gid 1000 app \
+    && useradd --uid 1000 --gid 1000 --create-home --shell /usr/sbin/nologin app \
+    && mkdir -p /app/backend/artifacts-storage /app/backend/user-plugins \
+    && chmod +x /app/backend/.docker/docker-entrypoint.sh \
+    && chown -R app:app /app
+
+WORKDIR /app/backend
+
+USER app
+
+EXPOSE 8000
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \
+  CMD ["/app/backend/.docker/docker-entrypoint.sh", "healthcheck"]
+
+ENTRYPOINT ["/app/backend/.docker/docker-entrypoint.sh"]
+CMD ["api"]

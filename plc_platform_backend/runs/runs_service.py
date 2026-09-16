@@ -544,8 +544,8 @@ class RunsService:
         testbench_settings = TestbenchConfiguration(
             root_folder=config.plc_root_folder,
             db_platform=DBPlatform.MONGODB,
-            db_ip="mongo",
-            db_port="27017",
+            db_ip=config.mongo_host,
+            db_port=str(config.mongo_port),
             db_username=config.mongo_initdb_root_username,
             db_password=config.mongo_initdb_root_password,
         )

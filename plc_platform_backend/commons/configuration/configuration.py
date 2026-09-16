@@ -11,6 +11,9 @@ def get_configuration():
 class Configuration(BaseSettings):
     mongo_initdb_root_username: str
     mongo_initdb_root_password: str
+    mongo_host: str = "mongo"
+    mongo_port: int = 27017
+    mongo_database: str = "plc-testbench"
     plc_root_folder: str
     plugins_directory: str
     redis_url: str
@@ -19,6 +22,9 @@ class Configuration(BaseSettings):
         for field_name in [
             "mongo_initdb_root_username",
             "mongo_initdb_root_password",
+            "mongo_host",
+            "mongo_port",
+            "mongo_database",
             "plc_root_folder",
             "plugins_directory",
             "redis_url",

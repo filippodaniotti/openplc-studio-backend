@@ -66,6 +66,12 @@ class Lifespans:
 
 app = FastAPI(lifespan=Lifespans([db_setup, storage_setup]))
 
+
+@app.get("/health", tags=["health"])
+async def health() -> dict[str, str]:
+    return {"status": "ok"}
+
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
