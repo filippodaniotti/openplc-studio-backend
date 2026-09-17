@@ -74,7 +74,6 @@ def _seed_progress_state(testbench: PLCTestbench) -> dict[str, NodeProgress]:
                 )
     return progress_state
 
-
 def _get_module_parameter(settings, parameter):
     return [s.value for s in settings if s.name == parameter][0]
 
@@ -91,13 +90,13 @@ def _hydrate_crossfade_settings(crossfade_list: list) -> list[CrossfadeSettings]
         )
     return result
 
-
+    
 def _get_hydrated_module_settings(
     settings: list[ModuleParameter], run_service: RunsService
 ):
     hydrated_module_settings = []
     for s in settings:
-
+        
         advanced_plc_band_settings: dict[
             str, list[plctestbench.plc_algorithm.PLCAlgorithm]
         ] = {}
@@ -204,7 +203,6 @@ def _get_hydrated_module_settings(
 
     return hydrated_module_settings
 
-
 async def _publish_run_completion(
     run_id: str, run_name: str, success: bool, redis_client: aioredis.Redis
 ) -> None:
@@ -223,8 +221,8 @@ async def _launch_run(
     run: Run,
     run_repository: RunsRepository,
     run_service: RunsService,
+    redis_client: Redis,
 ) -> None:
-    redis_client = aioredis.from_url(get_configuration().redis_url)
     original_audio_tracks = [
         (OriginalAudio, OriginalAudioSettings(track)) for track in run.tracks
     ]
@@ -411,7 +409,6 @@ async def _launch_run(
         await _publish_run_completion(
             run.id, run.name, success=False, redis_client=redis_client
         )
-        await redis_client.aclose()
         return
 
     run.status = RunStatus.COMPLETED
@@ -420,7 +417,7 @@ async def _launch_run(
         run.id, run.name, success=True, redis_client=redis_client
     )
 
-    await redis_client.aclose()
+   
 
 
 @lru_cache
@@ -451,7 +448,7 @@ class RunsService:
         return [Run.from_document(run) for run in await self.runs_repository.get_all()]
 
     async def launch_run_synch(self, run: Run) -> Run:
-        await _launch_run(run, self.runs_repository, self)
+        await _launch_run(run, self.runs_repository, self, self.redis_client)
 
     async def get_assets_tar_by_depth(
         self, run_id: str, depth: TestbenchNodeDepth
