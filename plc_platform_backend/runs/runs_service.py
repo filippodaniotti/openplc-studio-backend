@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import io
 import json
+import logging
 import os
 import pickle
 import tarfile
@@ -46,6 +47,7 @@ from plc_platform_backend.runs.runs_models import (
     RunCreateDto,
     RunPage,
     RunProgressMessage,
+    RunStateChangeMessage,
     RunStatus,
 )
 from plc_platform_backend.runs.runs_repository import (
@@ -55,6 +57,7 @@ from plc_platform_backend.runs.runs_repository import (
 from plc_platform_backend.runs.runs_ws import (
     RUN_COMPLETION_CHANNEL,
     RUN_PROGRESS_CHANNEL,
+    RUN_STATE_CHANGE_CHANNEL,
 )
 
 from plc_platform_backend.modules.modules_service import ModuleService
@@ -64,6 +67,7 @@ from plc_platform_backend.runs.runs_models import (
 )
 
 _PROGRESS_POLL_INTERVAL = 0.1
+logger = logging.getLogger(__name__)
 
 
 class RunNotDeletableError(Exception):
@@ -253,6 +257,55 @@ async def _publish_run_progress(
     await redis_client.publish(RUN_PROGRESS_CHANNEL, message.model_dump_json())
 
 
+async def _publish_run_state_change(
+    run_id: str,
+    run_name: str,
+    previous_status: RunStatus,
+    new_status: RunStatus,
+    redis_client: aioredis.Redis,
+) -> None:
+    message = RunStateChangeMessage(
+        run_id=run_id,
+        run_name=run_name,
+        previous_status=previous_status,
+        new_status=new_status,
+    )
+    await redis_client.publish(RUN_STATE_CHANGE_CHANNEL, message.model_dump_json())
+
+
+async def _transition_run_status(
+    run_id: str,
+    run_name: str,
+    expected_status: RunStatus,
+    new_status: RunStatus,
+    run_repository: RunsRepository,
+    redis_client: aioredis.Redis,
+):
+    transitioned_document = await run_repository.transition_status(
+        run_id, expected_status, new_status
+    )
+    if transitioned_document is None:
+        return None
+
+    try:
+        await _publish_run_state_change(
+            run_id,
+            run_name,
+            expected_status,
+            new_status,
+            redis_client,
+        )
+    except Exception:
+        logger.exception(
+            "Could not publish state change for run %s (%s -> %s)",
+            run_id,
+            expected_status.value,
+            new_status.value,
+        )
+
+    return transitioned_document
+
+
 def _build_testbench_from_config(
     run: Run | RunCreateDto,
     run_service: RunsService,
@@ -355,8 +408,13 @@ async def _launch_run(
     run_service: RunsService,
     redis_client: aioredis.Redis,
 ) -> None:
-    running_document = await run_repository.transition_status(
-        run.id, RunStatus.QUEUED, RunStatus.RUNNING
+    running_document = await _transition_run_status(
+        run.id,
+        run.name,
+        RunStatus.QUEUED,
+        RunStatus.RUNNING,
+        run_repository,
+        redis_client,
     )
     if running_document is None:
         return
@@ -430,8 +488,13 @@ async def _launch_run(
             raise run_exception
     except Exception as error:
         traceback.print_exception(error)
-        await run_repository.transition_status(
-            run.id, RunStatus.RUNNING, RunStatus.FAILED
+        await _transition_run_status(
+            run.id,
+            run.name,
+            RunStatus.RUNNING,
+            RunStatus.FAILED,
+            run_repository,
+            redis_client,
         )
         await _publish_run_completion(
             run.id, run.name, success=False, redis_client=redis_client
@@ -440,8 +503,13 @@ async def _launch_run(
     finally:
         InterceptableTqdm.reset_all()
 
-    await run_repository.transition_status(
-        run.id, RunStatus.RUNNING, RunStatus.COMPLETED
+    await _transition_run_status(
+        run.id,
+        run.name,
+        RunStatus.RUNNING,
+        RunStatus.COMPLETED,
+        run_repository,
+        redis_client,
     )
     await _publish_run_completion(
         run.id, run.name, success=True, redis_client=redis_client
@@ -478,8 +546,13 @@ class RunsService:
         if not run.testbench_internal_id:
             raise RunNotExecutableError(f"Run {run_id} has not been prepared")
 
-        queued_document = await self.runs_repository.transition_status(
-            run_id, RunStatus.CREATED, RunStatus.QUEUED
+        queued_document = await _transition_run_status(
+            run_id,
+            run.name,
+            RunStatus.CREATED,
+            RunStatus.QUEUED,
+            self.runs_repository,
+            self.redis_client,
         )
         if queued_document is None:
             current_run = await self.find_by_id(run_id)
@@ -491,8 +564,13 @@ class RunsService:
         try:
             actors.launch_run.send(run_id=run_id)
         except Exception as error:
-            await self.runs_repository.transition_status(
-                run_id, RunStatus.QUEUED, RunStatus.CREATED
+            await _transition_run_status(
+                run_id,
+                run.name,
+                RunStatus.QUEUED,
+                RunStatus.CREATED,
+                self.runs_repository,
+                self.redis_client,
             )
             raise RunQueueError(f"Run {run_id} could not be queued") from error
 

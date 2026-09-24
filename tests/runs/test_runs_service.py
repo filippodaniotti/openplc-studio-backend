@@ -27,6 +27,7 @@ from plc_platform_backend.runs.runs_service import (
     RunsService,
     _build_testbench_from_config,
     _launch_run,
+    _transition_run_status,
 )
 
 
@@ -176,6 +177,67 @@ class PrepareRunTests(IsolatedAsyncioTestCase):
         )
 
 
+class RunStateChangeTests(IsolatedAsyncioTestCase):
+    async def test_successful_transition_publishes_state_change(self) -> None:
+        repository = SimpleNamespace(
+            transition_status=AsyncMock(return_value=make_run_document(RunStatus.QUEUED))
+        )
+        redis_client = SimpleNamespace(publish=AsyncMock())
+
+        transitioned = await _transition_run_status(
+            "507f1f77bcf86cd799439011",
+            "Test run",
+            RunStatus.CREATED,
+            RunStatus.QUEUED,
+            repository,
+            redis_client,
+        )
+
+        self.assertIsNotNone(transitioned)
+        channel, payload = redis_client.publish.await_args.args
+        self.assertEqual(channel, "run.state_change")
+        self.assertIn('"type":"run.state_change"', payload)
+        self.assertIn('"previous_status":"created"', payload)
+        self.assertIn('"new_status":"queued"', payload)
+
+    async def test_failed_transition_does_not_publish_state_change(self) -> None:
+        repository = SimpleNamespace(transition_status=AsyncMock(return_value=None))
+        redis_client = SimpleNamespace(publish=AsyncMock())
+
+        transitioned = await _transition_run_status(
+            "507f1f77bcf86cd799439011",
+            "Test run",
+            RunStatus.CREATED,
+            RunStatus.QUEUED,
+            repository,
+            redis_client,
+        )
+
+        self.assertIsNone(transitioned)
+        redis_client.publish.assert_not_awaited()
+
+    async def test_publish_failure_does_not_undo_transition(self) -> None:
+        transitioned_document = make_run_document(RunStatus.QUEUED)
+        repository = SimpleNamespace(
+            transition_status=AsyncMock(return_value=transitioned_document)
+        )
+        redis_client = SimpleNamespace(publish=AsyncMock(side_effect=RuntimeError("Redis unavailable")))
+
+        transitioned = await _transition_run_status(
+            "507f1f77bcf86cd799439011",
+            "Test run",
+            RunStatus.CREATED,
+            RunStatus.QUEUED,
+            repository,
+            redis_client,
+        )
+
+        self.assertIs(transitioned, transitioned_document)
+        repository.transition_status.assert_awaited_once_with(
+            "507f1f77bcf86cd799439011", RunStatus.CREATED, RunStatus.QUEUED
+        )
+
+
 class RunsServiceLifecycleTests(IsolatedAsyncioTestCase):
     def setUp(self) -> None:
         self.service = RunsService.__new__(RunsService)
@@ -183,6 +245,7 @@ class RunsServiceLifecycleTests(IsolatedAsyncioTestCase):
             create_run=AsyncMock(),
             transition_status=AsyncMock(),
         )
+        self.service.redis_client = SimpleNamespace(publish=AsyncMock())
         self.service.find_by_id = AsyncMock()
 
     async def test_save_prepares_without_queueing(self) -> None:

@@ -89,6 +89,14 @@ class RunCompletionMessage(BaseModel):
     success: bool
 
 
+class RunStateChangeMessage(BaseModel):
+    type: Literal["run.state_change"] = "run.state_change"
+    run_id: str
+    run_name: str
+    previous_status: RunStatus
+    new_status: RunStatus
+
+
 class RunProgressMessage(BaseModel):
     type: Literal["run.progress"] = "run.progress"
     run_id: str
