@@ -66,6 +66,10 @@ from plc_platform_backend.runs.runs_models import (
 _PROGRESS_POLL_INTERVAL = 0.1
 
 
+class RunNotDeletableError(Exception):
+    pass
+
+
 def _seed_progress_state(testbench: PLCTestbench) -> dict[str, NodeProgress]:
     """
     Walks every node of every tree in the run and seeds an entry for it,
@@ -479,6 +483,17 @@ class RunsService:
             page_size=page_size,
         )
 
+    async def delete_run(self, run_id: str) -> None:
+        run = await self.find_by_id(run_id)
+        if run.status not in {RunStatus.COMPLETED, RunStatus.FAILED}:
+            raise RunNotDeletableError(
+                f"Run {run_id} cannot be deleted while its status is {run.status.value}"
+            )
+
+        deleted = await self.runs_repository.delete_run(run_id)
+        if not deleted:
+            raise ValueError(f"Run {run_id} not found")
+
     async def launch_run_synch(self, run: Run) -> None:
         await _launch_run(run, self.runs_repository, self, self.redis_client)
 
@@ -503,6 +518,8 @@ class RunsService:
                     continue
 
                 if depth == TestbenchNodeDepth.SAMPLE_MASKS:
+                    # pi-lens-ignore: python-insecure-deserialization
+                    # Sample masks are NumPy files written by our own testbench worker.
                     data: np.ndarray = np.load(p, allow_pickle=True)
                     tar = self.assets_service.add_json_to_tar(data, tar, p, ".npy")
                 elif depth == TestbenchNodeDepth.OUTPUT_ANALYSIS:

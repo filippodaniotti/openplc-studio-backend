@@ -39,6 +39,9 @@ class RunsRepository(BaseMongoDBRepository):
         return created_run
 
     async def get_run(self, run_id: str) -> RunDocument | None:
+        if not ObjectId.is_valid(run_id):
+            return None
+
         run_data = await self.collection.find_one({"_id": ObjectId(run_id)})
         return RunDocument(**run_data) if run_data else None
 
@@ -62,5 +65,8 @@ class RunsRepository(BaseMongoDBRepository):
         return result.modified_count > 0
 
     async def delete_run(self, run_id: str) -> bool:
+        if not ObjectId.is_valid(run_id):
+            return False
+
         result = await self.collection.delete_one({"_id": ObjectId(run_id)})
         return result.deleted_count > 0

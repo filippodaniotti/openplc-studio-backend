@@ -19,7 +19,11 @@ from plc_platform_backend.runs.runs_models import (
     RunConfigValidationError,
     RunPage,
 )
-from plc_platform_backend.runs.runs_service import RunsService, get_runs_service
+from plc_platform_backend.runs.runs_service import (
+    RunNotDeletableError,
+    RunsService,
+    get_runs_service,
+)
 
 router = APIRouter(
     prefix="/runs",
@@ -53,6 +57,19 @@ async def get_run(
     runs_service: Annotated[RunsService, Depends(get_runs_service)],
 ) -> Run:
     return await runs_service.find_by_id(run_id)
+
+
+@router.delete("/{run_id}", status_code=204)
+async def delete_run(
+    run_id: str,
+    runs_service: Annotated[RunsService, Depends(get_runs_service)],
+) -> None:
+    try:
+        await runs_service.delete_run(run_id)
+    except ValueError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except RunNotDeletableError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
 
 
 @router.get("/{run_id}/config/export")
