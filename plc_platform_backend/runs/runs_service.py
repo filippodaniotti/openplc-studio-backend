@@ -20,8 +20,8 @@ from plctestbench.models import DBPlatform, TestbenchConfiguration
 from plctestbench.output_analyser import PEAQData, SimpleCalculatorData
 from plctestbench.plc_testbench import PLCTestbench
 from plctestbench.settings import CrossfadeSettings, OriginalAudioSettings
+from plctestbench.utils import get_class
 from plctestbench.worker import OriginalAudio
-from redis import Redis
 
 from plc_platform_backend import actors
 from plc_platform_backend.assets.assets_models import TestbenchNodeDepth
@@ -70,6 +70,18 @@ class RunNotDeletableError(Exception):
     pass
 
 
+class RunNotExecutableError(Exception):
+    pass
+
+
+class RunQueueError(Exception):
+    pass
+
+
+class RunPreparationError(Exception):
+    pass
+
+
 def _seed_progress_state(testbench: PLCTestbench) -> dict[str, NodeProgress]:
     """
     Walks every node of every tree in the run and seeds an entry for it,
@@ -90,6 +102,7 @@ def _seed_progress_state(testbench: PLCTestbench) -> dict[str, NodeProgress]:
                 )
     return progress_state
 
+
 def _get_module_parameter(settings, parameter):
     return [s.value for s in settings if s.name == parameter][0]
 
@@ -106,13 +119,12 @@ def _hydrate_crossfade_settings(crossfade_list: list) -> list[CrossfadeSettings]
         )
     return result
 
-    
+
 def _get_hydrated_module_settings(
     settings: list[ModuleParameter], run_service: RunsService
 ):
     hydrated_module_settings = []
     for s in settings:
-        
         advanced_plc_band_settings: dict[
             str, list[plctestbench.plc_algorithm.PLCAlgorithm]
         ] = {}
@@ -129,9 +141,7 @@ def _get_hydrated_module_settings(
             try:
                 crossfade_frequencies = [int(f) for f in s.value]
             except (TypeError, ValueError) as error:
-                raise ValueError(
-                    f"Invalid crossfade frequencies: {s.value}"
-                ) from error
+                raise ValueError(f"Invalid crossfade frequencies: {s.value}") from error
             hydrated_module_settings.append(
                 ModuleParameter(name=s.name, value=crossfade_frequencies)
             )
@@ -145,7 +155,7 @@ def _get_hydrated_module_settings(
             )
         elif s.name == "band_settings":
             for band in {"linked", "mid", "side", "left", "right"}:
-                if not band in s.value.keys():
+                if band not in s.value.keys():
                     continue
 
                 stereo_image_processing = _get_module_parameter(
@@ -195,7 +205,7 @@ def _get_hydrated_module_settings(
             )
         elif s.name == "frequencies":
             for band in ["linked", "mid", "side", "left", "right"]:
-                if not band in s.value.keys():
+                if band not in s.value.keys():
                     continue
 
                 stereo_image_processing = _get_module_parameter(
@@ -228,6 +238,7 @@ def _get_hydrated_module_settings(
 
     return hydrated_module_settings
 
+
 async def _publish_run_completion(
     run_id: str, run_name: str, success: bool, redis_client: aioredis.Redis
 ) -> None:
@@ -242,12 +253,10 @@ async def _publish_run_progress(
     await redis_client.publish(RUN_PROGRESS_CHANNEL, message.model_dump_json())
 
 
-async def _launch_run(
-    run: Run,
-    run_repository: RunsRepository,
+def _build_testbench_from_config(
+    run: Run | RunCreateDto,
     run_service: RunsService,
-    redis_client: Redis,
-) -> None:
+) -> PLCTestbench:
     original_audio_tracks = [
         (OriginalAudio, OriginalAudioSettings(track)) for track in run.tracks
     ]
@@ -257,10 +266,9 @@ async def _launch_run(
     output_analysers = []
 
     for module in run.modules[ModuleType.PacketLossSimulator]:
-        cls_ = getattr(plctestbench.loss_simulator, module.name)
-        settings_cls = getattr(
-            plctestbench.settings,
-            run_service.get_module_settings_class_name(module.name),
+        cls_ = get_class(module.name)
+        settings_cls = get_class(
+            run_service.get_module_settings_class_name(module.name)
         )
 
         packet_loss_simulators.append(
@@ -268,40 +276,10 @@ async def _launch_run(
         )
 
     for module in run.modules[ModuleType.PLCAlgorithm]:
-        cls_ = getattr(plctestbench.plc_algorithm, module.name, None)
-        settings_cls = getattr(
-            plctestbench.settings,
-            run_service.get_module_settings_class_name(module.name),
-            None,
+        cls_ = get_class(module.name)
+        settings_cls = get_class(
+            run_service.get_module_settings_class_name(module.name)
         )
-
-        if cls_ is None:
-            import importlib.util
-            import sys
-            from pathlib import Path
-
-            plugin_file_path = (
-                Path(get_configuration().plugins_directory)
-                / f"{module.name}Algorithm.py"
-            )
-
-            if not plugin_file_path.exists():
-                raise ImportError(f"Plugin file {plugin_file_path} not found")
-
-            spec = importlib.util.spec_from_file_location(
-                f"{module.name}PLCAlgorithm", plugin_file_path
-            )
-            plugin_module = importlib.util.module_from_spec(spec)
-            sys.modules[f"{module.name}PLCAlgorithm"] = plugin_module
-            spec.loader.exec_module(plugin_module)
-
-            cls_ = getattr(plugin_module, module.name)
-
-            settings_cls = getattr(
-                plugin_module,
-                run_service.get_module_settings_class_name(module.name),
-                None,
-            )
 
         hydrated_module_settings = _get_hydrated_module_settings(
             module.settings, run_service
@@ -312,10 +290,9 @@ async def _launch_run(
         )
 
     for module in run.modules[ModuleType.OutputAnalyser]:
-        cls_ = getattr(plctestbench.output_analyser, module.name)
-        settings_cls = getattr(
-            plctestbench.settings,
-            run_service.get_module_settings_class_name(module.name),
+        cls_ = get_class(module.name)
+        settings_cls = get_class(
+            run_service.get_module_settings_class_name(module.name)
         )
 
         output_analysers.append(
@@ -333,13 +310,8 @@ async def _launch_run(
         run_service.testbench_settings,
     )
 
-    # Full per-run progress table, seeded with every node so that nodes which
-    # haven't started (or that start+finish between two polls) are still
-    # represented in every outgoing RunProgressMessage.
-    progress_state: dict[str, NodeProgress] = _seed_progress_state(testbench)
-
-    # Recupera i nodi dell'albero di esecuzione e assegna gli id ai moduli
-    # Un root_node per ogni traccia: accumuliamo gli id su tutte le tracce
+    # Store each generated execution-node ID on its configured module while the
+    # tree is prepared. The progress page can therefore render before execution.
     pls_modules = run.modules[ModuleType.PacketLossSimulator]
     plc_modules = run.modules[ModuleType.PLCAlgorithm]
     oa_modules = run.modules[ModuleType.OutputAnalyser]
@@ -347,11 +319,7 @@ async def _launch_run(
     n_pls = len(pls_modules)
     n_plc = len(plc_modules)
 
-    for module in pls_modules:
-        module.node_ids = []
-    for module in plc_modules:
-        module.node_ids = []
-    for module in oa_modules:
+    for module in (*pls_modules, *plc_modules, *oa_modules):
         module.node_ids = []
 
     for root_node in testbench.data_manager.root_nodes:
@@ -363,86 +331,121 @@ async def _launch_run(
         for module, node in zip(pls_modules, pls_nodes):
             module.node_ids.append(node.get_id())
 
-        plc_step = n_pls
-        for i, module in enumerate(plc_modules):
-            start = i * plc_step
-            module.node_ids += [n.get_id() for n in plc_nodes[start : start + plc_step]]
+        for index, module in enumerate(plc_modules):
+            start = index * n_pls
+            module.node_ids += [
+                node.get_id() for node in plc_nodes[start : start + n_pls]
+            ]
 
         oa_step = n_pls * n_plc
-        for i, module in enumerate(oa_modules):
-            start = i * oa_step
-            module.node_ids += [n.get_id() for n in oa_nodes[start : start + oa_step]]
+        for index, module in enumerate(oa_modules):
+            start = index * oa_step
+            module.node_ids += [
+                node.get_id() for node in oa_nodes[start : start + oa_step]
+            ]
 
-    run.status = RunStatus.RUNNING
     run.testbench_internal_id = testbench.run_id
-    await run_repository.update_run(run.id, run)
-    # Esegue il testbench in un thread separato per non bloccare l'event loop di FastAPI
-    run_exception: Exception | None = None
+    run.status = RunStatus.CREATED
+    return testbench
 
-    def _run_thread():
-        nonlocal run_exception
-        try:
-            testbench.run()
-        except Exception as e:
-            run_exception = e
-        finally:
-            InterceptableTqdm.reset_all()
 
-    thread = threading.Thread(target=_run_thread, daemon=True)
-    thread.start()
+async def _launch_run(
+    run: Run,
+    run_repository: RunsRepository,
+    run_service: RunsService,
+    redis_client: aioredis.Redis,
+) -> None:
+    running_document = await run_repository.transition_status(
+        run.id, RunStatus.QUEUED, RunStatus.RUNNING
+    )
+    if running_document is None:
+        return
 
-    # Polling: ad ogni tick, fondiamo lo stato delle barre attive e quello
-    # delle barre appena chiuse dentro progress_state, poi pubblichiamo
-    # SEMPRE la tabella intera (non solo cio' che e' vivo in questo istante).
-    while thread.is_alive():
-        active = InterceptableTqdm.get_all()
-        closed = InterceptableTqdm.get_all_closed()
+    run = Run.from_document(running_document)
 
-        for desc, current, total in (pbar.get_progress() for pbar in active.values()):
-            if "|" not in desc:
-                continue
-            description, _, node_id = desc.partition("|")
-            if not node_id:
-                continue
-            progress_state[node_id] = NodeProgress(
-                description=description,
-                node_id=node_id,
-                current=current,
-                total=total,
-            )
+    try:
+        if not run.testbench_internal_id:
+            raise ValueError(f"Run {run.id} has not been prepared")
 
-        for node_id, (desc, current, total) in closed.items():
-            description = desc.split("|", 1)[0] if "|" in desc else desc
-            progress_state[node_id] = NodeProgress(
-                description=description,
-                node_id=node_id,
-                current=current,
-                total=total,
-            )
-
-        await _publish_run_progress(
-            run.id, run.name, list(progress_state.values()), redis_client
+        testbench_settings = run_service.testbench_settings
+        testbench_settings.progress_monitor = lambda caller: InterceptableTqdm
+        testbench = PLCTestbench(
+            testbench_settings=testbench_settings,
+            run_id=run.testbench_internal_id,
         )
-        await asyncio.sleep(_PROGRESS_POLL_INTERVAL)
+        progress_state = _seed_progress_state(testbench)
+        run_exception: Exception | None = None
 
-    thread.join()
+        def _run_thread() -> None:
+            nonlocal run_exception
+            try:
+                testbench.run()
+            except Exception as error:
+                run_exception = error
+            finally:
+                InterceptableTqdm.reset_all()
 
-    if run_exception is not None:
-        traceback.print_exception(run_exception)
-        run.status = RunStatus.FAILED
-        await run_repository.update_run(run.id, run)
+        thread = threading.Thread(target=_run_thread, daemon=True)
+        thread.start()
+
+        while thread.is_alive():
+            active = InterceptableTqdm.get_all()
+            closed = InterceptableTqdm.get_all_closed()
+
+            for description, current, total in (
+                progress_bar.get_progress() for progress_bar in active.values()
+            ):
+                if "|" not in description:
+                    continue
+                description, _, node_id = description.partition("|")
+                if not node_id:
+                    continue
+                progress_state[node_id] = NodeProgress(
+                    description=description,
+                    node_id=node_id,
+                    current=current,
+                    total=total,
+                )
+
+            for node_id, (description, current, total) in closed.items():
+                if "|" in description:
+                    description = description.split("|", 1)[0]
+                progress_state[node_id] = NodeProgress(
+                    description=description,
+                    node_id=node_id,
+                    current=current,
+                    total=total,
+                )
+
+            await _publish_run_progress(
+                run.id,
+                run.name,
+                list(progress_state.values()),
+                redis_client,
+            )
+            await asyncio.sleep(_PROGRESS_POLL_INTERVAL)
+
+        thread.join()
+        if run_exception is not None:
+            raise run_exception
+    except Exception as error:
+        traceback.print_exception(error)
+        await run_repository.transition_status(
+            run.id, RunStatus.RUNNING, RunStatus.FAILED
+        )
         await _publish_run_completion(
             run.id, run.name, success=False, redis_client=redis_client
         )
         return
+    finally:
+        InterceptableTqdm.reset_all()
 
-    run.status = RunStatus.COMPLETED
-    await run_repository.update_run(run.id, run)
+    await run_repository.transition_status(
+        run.id, RunStatus.RUNNING, RunStatus.COMPLETED
+    )
     await _publish_run_completion(
         run.id, run.name, success=True, redis_client=redis_client
     )
-
-   
 
 
 @lru_cache
@@ -452,19 +455,48 @@ def get_runs_service() -> RunsService:
 
 
 class RunsService:
-
     def __init__(self) -> None:
         self.runs_repository: RunsRepository = get_runs_repository()
         self.assets_repository: AssetsRepository = get_assets_repository()
         self.assets_service: AssetsService = get_assets_service()
         self.testbench_settings: TestbenchConfiguration = self.get_testbench_settings()
-        self.redis_client: Redis = get_redis_client()
+        self.redis_client: aioredis.Redis = get_redis_client()
 
     async def save_run(self, run: RunCreateDto) -> Run:
+        run.status = RunStatus.CREATED
+        run.testbench_internal_id = None
+        try:
+            _build_testbench_from_config(run, self)
+        except Exception as error:
+            raise RunPreparationError(str(error)) from error
+
         saved_run = await self.runs_repository.create_run(run)
-        actors.launch_run.send(run_id=saved_run.id)
-        # await self.launch_run_synch(saved_run)
         return Run.from_document(saved_run)
+
+    async def execute_run(self, run_id: str) -> Run:
+        run = await self.find_by_id(run_id)
+        if not run.testbench_internal_id:
+            raise RunNotExecutableError(f"Run {run_id} has not been prepared")
+
+        queued_document = await self.runs_repository.transition_status(
+            run_id, RunStatus.CREATED, RunStatus.QUEUED
+        )
+        if queued_document is None:
+            current_run = await self.find_by_id(run_id)
+            raise RunNotExecutableError(
+                f"Run {run_id} cannot be executed while its status is "
+                f"{current_run.status.value}"
+            )
+
+        try:
+            actors.launch_run.send(run_id=run_id)
+        except Exception as error:
+            await self.runs_repository.transition_status(
+                run_id, RunStatus.QUEUED, RunStatus.CREATED
+            )
+            raise RunQueueError(f"Run {run_id} could not be queued") from error
+
+        return Run.from_document(queued_document)
 
     async def find_by_id(self, run_id: str) -> Run:
         document = await self.runs_repository.get_run(run_id)
@@ -485,7 +517,11 @@ class RunsService:
 
     async def delete_run(self, run_id: str) -> None:
         run = await self.find_by_id(run_id)
-        if run.status not in {RunStatus.COMPLETED, RunStatus.FAILED}:
+        if run.status not in {
+            RunStatus.CREATED,
+            RunStatus.COMPLETED,
+            RunStatus.FAILED,
+        }:
             raise RunNotDeletableError(
                 f"Run {run_id} cannot be deleted while its status is {run.status.value}"
             )
@@ -601,8 +637,7 @@ class RunsService:
                     {
                         "name": module.name,
                         "settings": [
-                            {"name": s.name, "value": s.value}
-                            for s in module.settings
+                            {"name": s.name, "value": s.value} for s in module.settings
                         ],
                     }
                     for module in modules

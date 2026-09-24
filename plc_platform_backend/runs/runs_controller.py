@@ -21,6 +21,9 @@ from plc_platform_backend.runs.runs_models import (
 )
 from plc_platform_backend.runs.runs_service import (
     RunNotDeletableError,
+    RunNotExecutableError,
+    RunPreparationError,
+    RunQueueError,
     RunsService,
     get_runs_service,
 )
@@ -48,7 +51,25 @@ async def create_run(
             status_code=422,
             detail=[error.model_dump() for error in errors],
         )
-    return await runs_service.save_run(run)
+    try:
+        return await runs_service.save_run(run)
+    except RunPreparationError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+
+@router.post("/{run_id}/execute", status_code=202)
+async def execute_run(
+    run_id: str,
+    runs_service: Annotated[RunsService, Depends(get_runs_service)],
+) -> Run:
+    try:
+        return await runs_service.execute_run(run_id)
+    except ValueError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except RunNotExecutableError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    except RunQueueError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
 
 
 @router.get("/{run_id}")
@@ -81,7 +102,9 @@ async def export_run_config(
     return StreamingResponse(
         io.BytesIO(config_json.encode("utf-8")),
         media_type="application/json",
-        headers={"Content-Disposition": f"attachment; filename=run_{run_id}_config.json"},
+        headers={
+            "Content-Disposition": f"attachment; filename=run_{run_id}_config.json"
+        },
     )
 
 

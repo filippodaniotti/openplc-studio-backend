@@ -1,11 +1,18 @@
 from __future__ import annotations
 
+from datetime import datetime
 from functools import lru_cache
 
 from bson import ObjectId
+from pymongo import ReturnDocument
 
 from plc_platform_backend.commons.base_mongodb_repository import BaseMongoDBRepository
-from plc_platform_backend.runs.runs_models import Run, RunCreateDto, RunDocument
+from plc_platform_backend.runs.runs_models import (
+    Run,
+    RunCreateDto,
+    RunDocument,
+    RunStatus,
+)
 
 COLLECTION_NAME = "runs"
 
@@ -59,10 +66,32 @@ class RunsRepository(BaseMongoDBRepository):
         return [RunDocument(**run_data) for run_data in runs_data]
 
     async def update_run(self, run_id: str, updated_run: Run) -> bool:
+        updated_run.updated = datetime.utcnow()
         result = await self.collection.update_one(
-            {"_id": ObjectId(run_id)}, {"$set": updated_run.model_dump()}
+            {"_id": ObjectId(run_id)},
+            {
+                "$set": updated_run.model_dump(
+                    exclude={"id", "created"},
+                )
+            },
         )
         return result.modified_count > 0
+
+    async def transition_status(
+        self,
+        run_id: str,
+        expected_status: RunStatus,
+        new_status: RunStatus,
+    ) -> RunDocument | None:
+        if not ObjectId.is_valid(run_id):
+            return None
+
+        run_data = await self.collection.find_one_and_update(
+            {"_id": ObjectId(run_id), "status": expected_status.value},
+            {"$set": {"status": new_status.value, "updated": datetime.utcnow()}},
+            return_document=ReturnDocument.AFTER,
+        )
+        return RunDocument(**run_data) if run_data else None
 
     async def delete_run(self, run_id: str) -> bool:
         if not ObjectId.is_valid(run_id):

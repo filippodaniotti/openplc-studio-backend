@@ -12,6 +12,7 @@ from plc_platform_backend.modules.modules_models import Module, ModuleType
 
 class RunStatus(str, Enum):
     CREATED = "created"
+    QUEUED = "queued"
     RUNNING = "running"
     FAILED = "failed"
     COMPLETED = "completed"
@@ -29,7 +30,7 @@ class RunDocument(BaseDocument):
 class RunCreateDto(BaseModel):
     author: str
     name: str
-    testbench_internal_id: Optional[str]
+    testbench_internal_id: Optional[str] = None
     status: RunStatus = RunStatus.CREATED
     tracks: list[str]
     modules: dict[ModuleType, list[Module]]
@@ -94,16 +95,17 @@ class RunProgressMessage(BaseModel):
     run_name: str
     nodes: list[NodeProgress]
 
-#Model for RunConfigDto
+
+# Model for RunConfigDto
 class RunConfigDto(BaseModel):
     name: str
     tracks: list[str]
     modules: dict[ModuleType, list[Module]]
 
-#Model for RunConfigValidationError
+
+# Model for RunConfigValidationError
 class RunConfigValidationError(BaseModel):
     module_type: str
     module_name: str
     setting: str | None = None
     error: str
-
