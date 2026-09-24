@@ -591,6 +591,21 @@ OutputAnalyser:
         default: 1
         values: null
 
+  - name: SpectralEnergyCalculator
+    settings:
+      - name: N
+        type: int
+        default: 1024
+        values: null
+      - name: hop
+        type: int
+        default: null
+        values: null
+      - name: amp_scale
+        type: float
+        default: 1
+        values: null
+
   - name: PEAQCalculator
     settings:
       - name: peaq_mode
