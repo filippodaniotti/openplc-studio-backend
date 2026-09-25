@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from functools import lru_cache
+import re
 
 from bson import ObjectId
 from pymongo import ReturnDocument
@@ -11,7 +12,9 @@ from plc_platform_backend.runs.runs_models import (
     Run,
     RunCreateDto,
     RunDocument,
+    RunSortField,
     RunStatus,
+    SortDirection,
 )
 
 COLLECTION_NAME = "runs"
@@ -52,18 +55,49 @@ class RunsRepository(BaseMongoDBRepository):
         run_data = await self.collection.find_one({"_id": ObjectId(run_id)})
         return RunDocument(**run_data) if run_data else None
 
-    async def count_all(self) -> int:
-        return await self.collection.count_documents({})
+    async def count_all(
+        self,
+        search: str | None = None,
+        statuses: list[RunStatus] | None = None,
+    ) -> int:
+        return await self.collection.count_documents(
+            self._build_page_filter(search, statuses)
+        )
 
-    async def get_page(self, skip: int, limit: int) -> list[RunDocument]:
+    async def get_page(
+        self,
+        skip: int,
+        limit: int,
+        search: str | None = None,
+        statuses: list[RunStatus] | None = None,
+        sort_by: RunSortField = "created",
+        sort_direction: SortDirection = "desc",
+    ) -> list[RunDocument]:
+        direction = 1 if sort_direction == "asc" else -1
         runs_data = (
-            await self.collection.find()
-            .sort([("created", -1), ("_id", -1)])
+            await self.collection.find(self._build_page_filter(search, statuses))
+            .sort([(sort_by, direction), ("_id", direction)])
             .skip(skip)
             .limit(limit)
             .to_list(length=limit)
         )
         return [RunDocument(**run_data) for run_data in runs_data]
+
+    @staticmethod
+    def _build_page_filter(
+        search: str | None,
+        statuses: list[RunStatus] | None,
+    ) -> dict:
+        query: dict = {}
+        if search and search.strip():
+            expression = re.escape(search.strip())
+            query["$or"] = [
+                {"name": {"$regex": expression, "$options": "i"}},
+                {"author": {"$regex": expression, "$options": "i"}},
+            ]
+        if statuses:
+            query["status"] = {"$in": [status.value for status in statuses]}
+        return query
 
     async def get_runs_referencing_tracks(
         self, track_names: list[str]

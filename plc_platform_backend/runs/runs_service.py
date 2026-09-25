@@ -47,8 +47,10 @@ from plc_platform_backend.runs.runs_models import (
     RunCreateDto,
     RunPage,
     RunProgressMessage,
+    RunSortField,
     RunStateChangeMessage,
     RunStatus,
+    SortDirection,
 )
 from plc_platform_backend.runs.runs_repository import (
     RunsRepository,
@@ -582,10 +584,25 @@ class RunsService:
             raise ValueError(f"Run {run_id} not found")
         return Run.from_document(document)
 
-    async def get_page(self, page: int, page_size: int) -> RunPage:
-        total = await self.runs_repository.count_all()
+    async def get_page(
+        self,
+        page: int,
+        page_size: int,
+        search: str | None = None,
+        statuses: list[RunStatus] | None = None,
+        sort_by: RunSortField = "created",
+        sort_direction: SortDirection = "desc",
+    ) -> RunPage:
+        total = await self.runs_repository.count_all(search, statuses)
         skip = (page - 1) * page_size
-        documents = await self.runs_repository.get_page(skip, page_size)
+        documents = await self.runs_repository.get_page(
+            skip,
+            page_size,
+            search,
+            statuses,
+            sort_by,
+            sort_direction,
+        )
         return RunPage(
             items=[Run.from_document(document) for document in documents],
             total=total,

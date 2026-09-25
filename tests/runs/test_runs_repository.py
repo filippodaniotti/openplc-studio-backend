@@ -30,3 +30,19 @@ class RunsRepositoryInvalidIdTests(IsolatedAsyncioTestCase):
             )
         )
         self.repository.collection.find_one_and_update.assert_not_awaited()
+
+    def test_page_filter_escapes_search_and_filters_statuses(self) -> None:
+        query = self.repository._build_page_filter(
+            "run.*", [RunStatus.RUNNING, RunStatus.COMPLETED]
+        )
+
+        self.assertEqual(
+            query,
+            {
+                "$or": [
+                    {"name": {"$regex": r"run\.\*", "$options": "i"}},
+                    {"author": {"$regex": r"run\.\*", "$options": "i"}},
+                ],
+                "status": {"$in": ["running", "completed"]},
+            },
+        )

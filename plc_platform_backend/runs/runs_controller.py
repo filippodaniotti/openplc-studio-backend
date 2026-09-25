@@ -18,6 +18,9 @@ from plc_platform_backend.runs.runs_models import (
     RunConfigDto,
     RunConfigValidationError,
     RunPage,
+    RunSortField,
+    RunStatus,
+    SortDirection,
 )
 from plc_platform_backend.runs.runs_service import (
     RunNotDeletableError,
@@ -139,8 +142,19 @@ async def get_all_runs(
     runs_service: Annotated[RunsService, Depends(get_runs_service)],
     page: Annotated[int, Query(ge=1)] = 1,
     page_size: Annotated[int, Query(ge=1, le=100)] = 10,
+    search: Annotated[str | None, Query(max_length=200)] = None,
+    status: Annotated[list[RunStatus] | None, Query()] = None,
+    sort_by: RunSortField = "created",
+    sort_direction: SortDirection = "desc",
 ) -> RunPage:
-    return await runs_service.get_page(page, page_size)
+    return await runs_service.get_page(
+        page,
+        page_size,
+        search,
+        status,
+        sort_by,
+        sort_direction,
+    )
 
 
 @router.post("/config/validate")

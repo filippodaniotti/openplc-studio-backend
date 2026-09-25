@@ -62,6 +62,10 @@ class Run(BaseModel):
         )
 
 
+RunSortField = Literal["name", "created", "updated", "status"]
+SortDirection = Literal["asc", "desc"]
+
+
 class RunPage(BaseModel):
     items: list[Run]
     total: int
