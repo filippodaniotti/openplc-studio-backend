@@ -65,6 +65,31 @@ class RunsRepository(BaseMongoDBRepository):
         )
         return [RunDocument(**run_data) for run_data in runs_data]
 
+    async def get_runs_referencing_tracks(
+        self, track_names: list[str]
+    ) -> list[RunDocument]:
+        if not track_names:
+            return []
+        runs_data = await self.collection.find(
+            {"tracks": {"$in": track_names}}
+        ).to_list(length=None)
+        return [RunDocument(**run_data) for run_data in runs_data]
+
+    async def count_runs_referencing_track(self, track_name: str) -> int:
+        return await self.collection.count_documents({"tracks": track_name})
+
+    async def get_runs_referencing_track(
+        self, track_name: str, skip: int, limit: int
+    ) -> list[RunDocument]:
+        runs_data = (
+            await self.collection.find({"tracks": track_name})
+            .sort([("created", -1), ("_id", -1)])
+            .skip(skip)
+            .limit(limit)
+            .to_list(length=limit)
+        )
+        return [RunDocument(**run_data) for run_data in runs_data]
+
     async def update_run(self, run_id: str, updated_run: Run) -> bool:
         updated_run.updated = datetime.utcnow()
         result = await self.collection.update_one(
