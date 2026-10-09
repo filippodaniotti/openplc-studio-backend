@@ -72,6 +72,7 @@ def test_frozen_outputs_are_run_scoped_idempotent_and_keep_zero_and_excluded_raw
         await service.exclude(study_id, excluded, SessionExclusion(expected_study_revision=study.revision, excluded=True, reason="=unsafe spreadsheet formula"))
         provisional = await study_results(await service.study(study_id), service.participants, snapshots)
         assert provisional["provisional"]
+        assert "quality_control_analysis" not in provisional["analysis"]
         assert provisional["counts"]["included"] == 1
         assert all(condition["mean"] == 0 for condition in provisional["analysis"]["conditions"])
         study = await service.study(study_id)
@@ -85,6 +86,12 @@ def test_frozen_outputs_are_run_scoped_idempotent_and_keep_zero_and_excluded_raw
         assert all(session["consent_acknowledged_at"] for session in metadata)
         result = await study_results(frozen, service.participants, snapshots)
         assert result["included_sessions"] == [included]
+        quality = result["analysis"]["quality_control_analysis"]
+        assert quality["exploratory"] is True
+        assert quality["participant_count"] == 1
+        assert quality["response_count"] == len([row for row in rows if row["included"]])
+        assert {condition["role"] for condition in quality["conditions"]} == {"plc", "anchor", "hidden_reference"}
+        assert quality["inference"]["reason"] == "mixed_effects_requires_at_least_five_participants"
         before = {source.source_path: Path(source.source_path).read_bytes() for source in frozen.sources}
         directory, outputs = publish_final_artifacts(frozen, result, rows, metadata)
         assert publish_final_artifacts(frozen, result, rows, metadata) == (directory, outputs)
@@ -96,7 +103,9 @@ def test_frozen_outputs_are_run_scoped_idempotent_and_keep_zero_and_excluded_raw
             assert payload["status"] == "finalized" and "responses" not in payload
             assert payload["excerpts"][0]["mean"] == 0
             assert payload["excerpts"][0]["response_count"] == 1
-        assert json.loads((Path(directory) / "results.json").read_text())["status"] == "finalized"
+        published = json.loads((Path(directory) / "results.json").read_text())
+        assert published["status"] == "finalized"
+        assert published["analysis"]["quality_control_analysis"] == quality
         assert "'=unsafe spreadsheet formula" in (Path(directory) / "responses.csv").read_text()
         raw = json.loads((Path(directory) / "responses.json").read_text())
         assert any(row["score"] == 80 and row["excluded"] and not row["included"] for row in raw)

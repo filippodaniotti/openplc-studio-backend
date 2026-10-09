@@ -9,7 +9,7 @@ from fastapi import HTTPException
 from plc_platform_backend.commons.base_mongodb_repository import BaseMongoDBRepository
 from .participant_repository import ParticipantRepository
 from .studies_models import ListeningStudyDocument, StudyStatus
-from .study_statistics import ANALYSIS_VERSION, ANALYSIS_ENVIRONMENT, analyze_study
+from .study_statistics import ANALYSIS_VERSION, ANALYSIS_ENVIRONMENT, analyze_study, analyze_quality_control_study
 
 
 class AnalysisSnapshotsRepository(BaseMongoDBRepository):
@@ -87,6 +87,12 @@ async def study_results(study: ListeningStudyDocument, participants: Participant
     included_rows = [row for row in rows if row["included"]]
     try:
         analysis = await asyncio.to_thread(analyze_study, study.definition, included_rows, **filters)
+        # QC comparisons have their own fit/family and are prepared only for
+        # frozen data, not on every live collection update.
+        if study.status != StudyStatus.COLLECTING:
+            analysis["quality_control_analysis"] = await asyncio.to_thread(
+                analyze_quality_control_study, study.definition, included_rows, **filters,
+            )
     except ValueError as error:
         raise HTTPException(422, str(error)) from error
     heads = list(study.sessions.values())
