@@ -21,7 +21,7 @@ from plc_platform_backend.assets.assets_repository import (
 from plc_platform_backend.runs.runs_models import RunDocument, RunStatus
 from plc_platform_backend.runs.runs_repository import RunsRepository, get_runs_repository
 
-_BLOCKING_STATUSES = {RunStatus.CREATED, RunStatus.QUEUED, RunStatus.RUNNING}
+_BLOCKING_STATUSES = {RunStatus.CREATED, RunStatus.QUEUED, RunStatus.RUNNING, RunStatus.AWAITING_INPUT}
 _UPLOAD_CHUNK_SIZE = 1024 * 1024
 
 

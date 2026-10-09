@@ -14,8 +14,15 @@ class RunStatus(str, Enum):
     CREATED = "created"
     QUEUED = "queued"
     RUNNING = "running"
+    AWAITING_INPUT = "awaiting_input"
     FAILED = "failed"
     COMPLETED = "completed"
+
+
+class RunFailure(BaseModel):
+    code: Literal["human_no_eligible_excerpts", "execution_failed"]
+    message: str
+    guidance: str
 
 
 class RunDocument(BaseDocument):
@@ -23,6 +30,7 @@ class RunDocument(BaseDocument):
     name: str
     testbench_internal_id: Optional[str] = None
     status: RunStatus = RunStatus.CREATED
+    failure: RunFailure | None = None
     tracks: list[str]
     modules: dict[ModuleType, list[Module]]
 
@@ -44,6 +52,7 @@ class Run(BaseModel):
     name: str
     testbench_internal_id: Optional[str]
     status: RunStatus = RunStatus.CREATED
+    failure: RunFailure | None = None
     tracks: list[str]
     modules: dict[ModuleType, list[Module]]
 
@@ -57,6 +66,7 @@ class Run(BaseModel):
             name=document.name,
             testbench_internal_id=document.testbench_internal_id,
             status=document.status,
+            failure=document.failure,
             tracks=document.tracks,
             modules=document.modules,
         )
@@ -76,6 +86,7 @@ class RunPage(BaseModel):
 class RunDashboardCounts(BaseModel):
     running: int
     queued: int
+    awaiting_input: int = 0
     completed_recent: int
     failed_recent: int
 
@@ -107,6 +118,7 @@ class RunCompletionMessage(BaseModel):
     run_id: str
     run_name: str
     success: bool
+    failure: RunFailure | None = None
 
 
 class RunStateChangeMessage(BaseModel):

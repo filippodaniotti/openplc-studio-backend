@@ -538,6 +538,53 @@ PLCAlgorithm:
           crossfade frequencies.
 
 OutputAnalyser:
+  - name: HumanCalculator
+    settings:
+      - name: test_type
+        type: Enum
+        default: mushra
+        values:
+          - mushra
+      - name: stimulus_length
+        type: int
+        default: 3000
+        values: null
+        validation:
+          min: 1000
+          max: 12000
+          step: 1
+      - name: single_loss_per_stimulus
+        type: bool
+        default: true
+        values: null
+      - name: trials_per_track
+        type: int
+        default: 20
+        values: null
+        validation:
+          min: 1
+          step: 1
+      - name: iterations
+        type: int
+        default: 1
+        values: null
+        validation:
+          min: 1
+          step: 1
+      - name: choose_seed
+        type: int
+        default: 1
+        values: null
+        validation:
+          min: 0
+          step: 1
+      - name: loudness_threshold_db
+        type: float
+        default: -10
+        values: null
+        validation:
+          max: 0
+
   - name: MSECalculator
     settings:
       - name: N

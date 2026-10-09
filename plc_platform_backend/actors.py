@@ -12,6 +12,6 @@ broker.add_middleware(AsyncIO())
 
 dramatiq.set_broker(broker)
 
-from .runs.runs_actors import launch_run
+from .runs.runs_actors import launch_run, finalize_listening_run
 
-__all__ = ("launch_run",)
+__all__ = ("launch_run", "finalize_listening_run")
