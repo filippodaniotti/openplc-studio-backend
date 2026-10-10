@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import ast
+import os
+import tempfile
 from datetime import datetime, timezone
 from functools import lru_cache
 from pathlib import Path
@@ -24,6 +26,37 @@ def get_plugins_service() -> PluginsService:
 
 
 class PluginsService:
+    def upload(self, filename: str, content: bytes) -> PluginInventoryItem:
+        if not filename or "/" in filename or "\\" in filename or not filename.endswith(".py"):
+            raise ValueError("Choose a Python plugin file (.py) with a plain filename")
+        if not content:
+            raise ValueError("The plugin file is empty")
+        if len(content) > 5 * 1024 * 1024:
+            raise ValueError("Plugin files must be 5 MB or smaller")
+        try:
+            tree = ast.parse(content.decode("utf-8"), filename=filename)
+            spec = self._parse_manifest(tree)
+            self._validate_runtime_shape(filename, tree, spec)
+        except (UnicodeError, SyntaxError, ValueError, yaml.YAMLError, ValidationError) as error:
+            raise ValueError(self._format_error(error)) from error
+
+        directory = Path(get_configuration().plugins_directory)
+        staged_path: Path | None = None
+        try:
+            directory.mkdir(parents=True, exist_ok=True)
+            with tempfile.NamedTemporaryFile(dir=directory, suffix=".tmp", delete=False) as destination:
+                staged_path = Path(destination.name)
+                destination.write(content)
+            os.link(staged_path, directory / filename)
+        except FileExistsError:
+            raise FileExistsError(f"Plugin '{filename}' already exists") from None
+        except OSError as error:
+            raise RuntimeError(f"Could not save plugin: {error.strerror or 'Storage error'}") from error
+        finally:
+            if staged_path is not None:
+                staged_path.unlink(missing_ok=True)
+        return PluginInventoryItem(filename=filename, status=PluginStatus.AVAILABLE, spec=spec)
+
     def scan(self) -> PluginInventory:
         plugins_path = Path(get_configuration().plugins_directory)
         if not plugins_path.exists():

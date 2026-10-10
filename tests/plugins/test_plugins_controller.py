@@ -49,3 +49,21 @@ class PluginsControllerTests(TestCase):
 
         self.assertEqual(response.status_code, 500)
         self.assertEqual(response.json()["detail"], "Could not read plugins")
+
+    def test_upload_passes_file_to_service(self) -> None:
+        self.service.upload.return_value = PluginInventoryItem(
+            filename="DemoAlgorithm.py", status=PluginStatus.AVAILABLE,
+        )
+        response = self.client.post("/plugins", files={"file": ("DemoAlgorithm.py", b"plugin")})
+        self.assertEqual(response.status_code, 201)
+        self.service.upload.assert_called_once_with("DemoAlgorithm.py", b"plugin")
+
+    def test_upload_maps_errors(self) -> None:
+        for error, status in [(ValueError("Invalid plugin"), 400),
+                              (FileExistsError("Already exists"), 409),
+                              (RuntimeError("Storage error"), 500)]:
+            with self.subTest(status=status):
+                self.service.upload.side_effect = error
+                response = self.client.post("/plugins", files={"file": ("DemoAlgorithm.py", b"plugin")})
+                self.assertEqual(response.status_code, status)
+                self.assertEqual(response.json()["detail"], str(error))

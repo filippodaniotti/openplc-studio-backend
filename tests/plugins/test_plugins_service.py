@@ -69,6 +69,31 @@ class PluginsServiceTests(TestCase):
         self.assertEqual(plugin.spec.settings[0].name, "strength")
         self.assertIsNone(plugin.error)
 
+    def test_upload_saves_valid_plugin_and_rejects_overwrite(self) -> None:
+        service = PluginsService()
+        plugin = service.upload("DemoAlgorithm.py", VALID_PLUGIN.encode())
+        self.assertEqual(plugin.status, PluginStatus.AVAILABLE)
+        self.assertEqual(service.scan().items[0].filename, "DemoAlgorithm.py")
+        with self.assertRaises(FileExistsError):
+            service.upload("DemoAlgorithm.py", VALID_PLUGIN.encode())
+        self.assertEqual((self.plugins_directory / "DemoAlgorithm.py").read_text(), VALID_PLUGIN)
+
+    def test_upload_rejects_unsafe_names_and_invalid_content(self) -> None:
+        for filename, content in [
+            ("../DemoAlgorithm.py", VALID_PLUGIN.encode()),
+            ("..\\DemoAlgorithm.py", VALID_PLUGIN.encode()),
+            ("Demo.txt", VALID_PLUGIN.encode()),
+            ("DemoAlgorithm.py", b""),
+            ("DemoAlgorithm.py", b"\xff"),
+            ("DemoAlgorithm.py", b"class Demo: pass"),
+            ("Wrong.py", VALID_PLUGIN.encode()),
+            ("DemoAlgorithm.py", b"x" * (5 * 1024 * 1024 + 1)),
+        ]:
+            with self.subTest(filename=filename, size=len(content)):
+                with self.assertRaises(ValueError):
+                    PluginsService().upload(filename, content)
+        self.assertEqual(list(self.plugins_directory.iterdir()), [])
+
     def test_reports_invalid_plugins(self) -> None:
         cases = [
             ("BrokenAlgorithm.py", "def broken(:\n", "Python syntax error"),
