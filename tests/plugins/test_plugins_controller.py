@@ -10,8 +10,11 @@ from plc_platform_backend.plugins.plugins_models import (
     PluginInventory,
     PluginInventoryItem,
     PluginStatus,
+    PluginSource,
+    PluginValidation,
+    PluginDiagnostic,
 )
-from plc_platform_backend.plugins.plugins_service import get_plugins_service
+from plc_platform_backend.plugins.plugins_service import get_plugins_service, InvalidPluginSource, PluginConflictError
 
 
 class PluginsControllerTests(TestCase):
@@ -21,6 +24,50 @@ class PluginsControllerTests(TestCase):
         app.include_router(router)
         app.dependency_overrides[get_plugins_service] = lambda: self.service
         self.client = TestClient(app)
+
+    def test_source_endpoints_return_source_validation_and_save_results(self) -> None:
+        source = PluginSource(
+            filename='DemoAlgorithm.py', content='source', revision='hash',
+            plugin=PluginInventoryItem(filename='DemoAlgorithm.py', status=PluginStatus.AVAILABLE),
+        )
+        self.service.get_source.return_value = source
+        response = self.client.get('/plugins/DemoAlgorithm.py/source')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()['content'], 'source')
+        self.assertNotIn('path', response.json())
+        self.service.get_source.assert_called_once_with('DemoAlgorithm.py')
+
+        self.service.validate_source.return_value = PluginValidation(valid=False, diagnostics=[
+            PluginDiagnostic(message='Syntax error', line=1, column=5),
+        ])
+        response = self.client.post('/plugins/DemoAlgorithm.py/validate', json={'content': 'draft'})
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(response.json()['valid'])
+        self.assertEqual(response.json()['diagnostics'][0]['line'], 1)
+        self.service.validate_source.assert_called_once_with('DemoAlgorithm.py', 'draft')
+
+        self.service.save_source.return_value = source
+        response = self.client.put('/plugins/DemoAlgorithm.py/source', json={'content': 'draft', 'revision': 'hash'})
+        self.assertEqual(response.status_code, 200)
+        self.service.save_source.assert_called_once_with('DemoAlgorithm.py', 'draft', 'hash')
+
+    def test_editor_endpoints_map_storage_conflict_and_validation_errors(self) -> None:
+        for error, status in [(FileNotFoundError('Not found'), 404), (ValueError('Unsafe path'), 400),
+                              (RuntimeError('Storage error'), 500), (PluginConflictError('Changed'), 409)]:
+            with self.subTest(status=status):
+                self.service.save_source.side_effect = error
+                response = self.client.put('/plugins/DemoAlgorithm.py/source', json={'content': 'draft', 'revision': 'hash'})
+                self.assertEqual(response.status_code, status)
+                self.assertEqual(response.json()['detail'], str(error))
+        self.service.save_source.side_effect = InvalidPluginSource([PluginDiagnostic(message='Bad syntax', line=2, column=4)])
+        response = self.client.put('/plugins/DemoAlgorithm.py/source', json={'content': 'draft', 'revision': 'hash'})
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()['detail']['diagnostics'][0]['line'], 2)
+
+    def test_save_requires_revision_and_source_content(self) -> None:
+        response = self.client.put('/plugins/DemoAlgorithm.py/source', json={'content': 'draft'})
+        self.assertEqual(response.status_code, 422)
+        self.service.save_source.assert_not_called()
 
     def test_returns_inventory_without_server_paths(self) -> None:
         self.service.scan.return_value = PluginInventory(

@@ -22,3 +22,29 @@ class PluginInventoryItem(BaseModel):
 class PluginInventory(BaseModel):
     scanned_at: datetime
     items: list[PluginInventoryItem]
+
+
+class PluginDiagnostic(BaseModel):
+    message: str
+    line: int | None = None
+    column: int | None = None
+
+
+class PluginValidation(BaseModel):
+    valid: bool
+    diagnostics: list[PluginDiagnostic]
+
+
+class PluginSource(BaseModel):
+    filename: str
+    content: str
+    revision: str
+    plugin: PluginInventoryItem
+
+
+class PluginSourceInput(BaseModel):
+    content: str
+
+
+class PluginSaveInput(PluginSourceInput):
+    revision: str

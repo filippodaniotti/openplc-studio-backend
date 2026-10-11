@@ -1,5 +1,6 @@
 import os
 import tempfile
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest import TestCase
 from unittest.mock import patch
@@ -8,7 +9,7 @@ from plc_platform_backend.commons.configuration.configuration import get_configu
 from plc_platform_backend.modules.modules_models import ModuleType
 from plc_platform_backend.modules.modules_repository import ModulesRepository
 from plc_platform_backend.plugins.plugins_models import PluginStatus
-from plc_platform_backend.plugins.plugins_service import PluginsService
+from plc_platform_backend.plugins.plugins_service import PluginsService, InvalidPluginSource, PluginConflictError
 
 
 VALID_PLUGIN = '''"""
@@ -93,6 +94,125 @@ class PluginsServiceTests(TestCase):
                 with self.assertRaises(ValueError):
                     PluginsService().upload(filename, content)
         self.assertEqual(list(self.plugins_directory.iterdir()), [])
+
+    def test_source_roundtrip_preserves_utf8_and_line_endings(self) -> None:
+        original = (VALID_PLUGIN + '# café\n').replace('\n', '\r\n')
+        path = self.plugins_directory / 'DemoAlgorithm.py'
+        path.write_bytes(original.encode())
+        path.chmod(0o640)
+        service = PluginsService()
+        source = service.get_source(path.name)
+        self.assertEqual(source.content, original)
+        edited = original + '# edited\r\n'
+        saved = service.save_source(path.name, edited, source.revision)
+        self.assertEqual(path.read_bytes(), edited.encode())
+        self.assertEqual(service.get_source(path.name), saved)
+        self.assertNotEqual(saved.revision, source.revision)
+        self.assertEqual(path.stat().st_mode & 0o777, 0o640)
+        self.assertEqual(saved.plugin.status, PluginStatus.AVAILABLE)
+
+    def test_invalid_plugin_can_be_read_repaired_and_validated_without_execution(self) -> None:
+        path = self.plugins_directory / 'DemoAlgorithm.py'
+        path.write_text('def broken(:\n')
+        service = PluginsService()
+        source = service.get_source(path.name)
+        self.assertEqual(source.plugin.status, PluginStatus.INVALID)
+        result = service.validate_source(path.name, source.content)
+        self.assertFalse(result.valid)
+        self.assertEqual(result.diagnostics[0].line, 1)
+        self.assertIsNotNone(result.diagnostics[0].column)
+        repaired = VALID_PLUGIN + '\nraise RuntimeError("must not execute")\n'
+        self.assertTrue(service.validate_source(path.name, repaired).valid)
+        self.assertEqual(path.read_text(), source.content)
+        self.assertEqual(service.save_source(path.name, repaired, source.revision).plugin.status, PluginStatus.AVAILABLE)
+
+    def test_invalid_saves_preserve_original_and_share_upload_validation(self) -> None:
+        path = self.plugins_directory / 'DemoAlgorithm.py'
+        path.write_text(VALID_PLUGIN)
+        service = PluginsService()
+        source = service.get_source(path.name)
+        for content in ['', 'def broken(:', 'class Demo: pass',
+                        VALID_PLUGIN.replace('name: Demo', 'name: Renamed'),
+                        VALID_PLUGIN.replace('class DemoSettings:', 'class OtherSettings:'),
+                        VALID_PLUGIN.replace('name: Demo', 'settings: []'),
+                        'x' * (5 * 1024 * 1024 + 1)]:
+            with self.subTest(content=content[:30]):
+                result = service.validate_source(path.name, content)
+                self.assertFalse(result.valid)
+                with self.assertRaises(InvalidPluginSource):
+                    service.save_source(path.name, content, source.revision)
+                with self.assertRaises(ValueError):
+                    service.upload(path.name, content.encode())
+                self.assertEqual(path.read_text(), VALID_PLUGIN)
+
+    def test_source_rejects_unsafe_paths_symlinks_missing_and_oversized_files(self) -> None:
+        service = PluginsService()
+        for filename in ['../DemoAlgorithm.py', '/tmp/Demo.py', '..\\Demo.py', 'Demo.txt', 'bad\x00.py']:
+            with self.subTest(filename=filename):
+                with self.assertRaises(ValueError):
+                    service.get_source(filename)
+                with self.assertRaises(ValueError):
+                    service.save_source(filename, VALID_PLUGIN, 'revision')
+        with self.assertRaises(FileNotFoundError):
+            service.get_source('Missing.py')
+        target = self.plugins_directory / 'target.txt'
+        target.write_text(VALID_PLUGIN)
+        link = self.plugins_directory / 'DemoAlgorithm.py'
+        link.symlink_to(target)
+        with self.assertRaises(ValueError):
+            service.get_source(link.name)
+        with self.assertRaises(ValueError):
+            service.save_source(link.name, VALID_PLUGIN, 'revision')
+        link.unlink()
+        link.mkdir()
+        with self.assertRaises(ValueError):
+            service.get_source(link.name)
+        link.rmdir()
+        link.write_bytes(b'x' * (5 * 1024 * 1024 + 1))
+        with self.assertRaises(ValueError):
+            service.get_source(link.name)
+        link.write_bytes(b'\xff')
+        with self.assertRaisesRegex(ValueError, 'UTF-8'):
+            service.get_source(link.name)
+
+    def test_stale_revision_preserves_external_changes(self) -> None:
+        path = self.plugins_directory / 'DemoAlgorithm.py'
+        path.write_text(VALID_PLUGIN)
+        service = PluginsService()
+        source = service.get_source(path.name)
+        external = VALID_PLUGIN + '# external\n'
+        path.write_text(external)
+        with self.assertRaises(PluginConflictError):
+            service.save_source(path.name, VALID_PLUGIN + '# editor\n', source.revision)
+        self.assertEqual(path.read_text(), external)
+
+    def test_concurrent_editor_saves_do_not_overwrite_each_other(self) -> None:
+        path = self.plugins_directory / 'DemoAlgorithm.py'
+        path.write_text(VALID_PLUGIN)
+        revision = PluginsService().get_source(path.name).revision
+
+        def save(comment):
+            try:
+                return PluginsService().save_source(path.name, VALID_PLUGIN + comment, revision)
+            except PluginConflictError:
+                return None
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            results = list(executor.map(save, ['# first\n', '# second\n']))
+        winners = [result for result in results if result is not None]
+        self.assertEqual(len(winners), 1)
+        self.assertEqual(path.read_text(), winners[0].content)
+
+    def test_storage_failure_leaves_original_and_removes_staged_file(self) -> None:
+        path = self.plugins_directory / 'DemoAlgorithm.py'
+        path.write_text(VALID_PLUGIN)
+        service = PluginsService()
+        revision = service.get_source(path.name).revision
+        with patch('plc_platform_backend.plugins.plugins_service.os.replace', side_effect=PermissionError(13, 'Permission denied')):
+            with self.assertRaisesRegex(RuntimeError, 'Could not save plugin'):
+                service.save_source(path.name, VALID_PLUGIN + '# change\n', revision)
+        self.assertEqual(path.read_text(), VALID_PLUGIN)
+        self.assertEqual(list(self.plugins_directory.glob('*.tmp')), [])
 
     def test_reports_invalid_plugins(self) -> None:
         cases = [
