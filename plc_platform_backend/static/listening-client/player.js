@@ -10,6 +10,9 @@
   const MAX_BYTES = 64 * 1024 * 1024;
   let checkpoint, nonce, context, control, config, api, storageKey, database;
   let index = 0, pending = null, flight = null, loader = null, generation = 0;
+  let volumeSetup = true;
+  const trialInstructions = $('instructions').textContent;
+  const volumeInstructions = 'Put on your headphones and play the reference excerpt. Starting at a low device volume, adjust the playback slider and your device volume until the audio is clear and comfortable, never uncomfortably loud. When ready, continue to the trials. Keep the same headphones, playback volume, and device volume for the rest of the study so your ratings are comparable.';
   let ready = false, locked = false, navigating = false, pollTimer, saveTimer;
   const rows = new Map(), changes = new Map();
   const key = row => `${row.trial_id}:${row.condition_id}`;
@@ -59,6 +62,7 @@
   }
   function buttons() {
     const busy = Boolean(flight) || navigating;
+    $('volume-continue').disabled = !ready || !writable() || busy;
     $('previous').disabled = !ready || !writable() || busy || index === 0;
     $('next').disabled = !ready || !writable() || busy || !answeredPage();
     $('save').disabled = !ready || !writable() || busy;
@@ -133,13 +137,18 @@
     const currentGeneration = ++generation;
     clearAudio(); $('conditions').replaceChildren(); buttons();
     $('reference').disabled = $('pause').disabled = true;
-    const trial = checkpoint.trial_order[index], page = config.pages.find(page => page.id === trial);
+    const trial = checkpoint.trial_order[volumeSetup ? 0 : index], page = config.pages.find(page => page.id === trial);
+    const volumePage = config.pages.find(page => page.type === 'volume');
+    $('instructions').textContent = volumeSetup ? (volumePage?.content || volumeInstructions) : trialInstructions;
+    for (const id of ['quality-scale', 'trial-navigation', 'rating-help', 'conditions']) $(id).hidden = volumeSetup;
+    $('volume-continue').hidden = !volumeSetup;
+    $('volume-label').hidden = !volumeSetup;
     if (!page || page.type !== 'mushra') throw new Error('Published MUSHRA configuration does not match this invitation');
-    $('title').textContent = `Trial ${index + 1} of ${checkpoint.trial_order.length}`;
+    $('title').textContent = volumeSetup ? 'Adjust your listening volume' : `Trial ${index + 1} of ${checkpoint.trial_order.length}`;
     status('Loading this excerpt…'); loader = new AbortController();
     const signal = loader.signal;
-    const paths = new Map(Object.entries(page.stimuli)); paths.set('reference', page.reference);
-    const order = checkpoint.condition_orders[trial];
+    const paths = new Map(volumeSetup ? [] : Object.entries(page.stimuli)); paths.set('reference', page.reference);
+    const order = volumeSetup ? ['reference'] : checkpoint.condition_orders[trial];
     if (!order || new Set(order).size !== paths.size || order.some(id => !paths.has(id))) throw new Error('Condition order/configuration mismatch');
     const stimuli = new Map(); let cursor = 0, decodedBytes = 0, estimatedBytes = 0;
     const currentLoader = loader;
@@ -173,10 +182,10 @@
     control = new MushraAudioControl(context, 2048, reference, ordered, { sendError: error }, false, false, false, false, false);
     control.initAudio();
     control.setLoopingActive($('loop').checked);
-    $('break').hidden = index === 0 || index % 10 !== 0;
+    $('break').hidden = volumeSetup || index === 0 || index % 10 !== 0;
     control.addEventListener(event => { if (event.name === 'processUpdate') $('position').value = event.currentSample / reference.getAudioBuffer().length; });
     $('conditions').style.gridTemplateColumns = `repeat(${order.length}, minmax(100px,1fr))`;
-    order.forEach((id, position) => {
+    (volumeSetup ? [] : order).forEach((id, position) => {
       const identifier = `${trial}:${id}`;
       const row = rows.get(identifier) ?? { trial_id: trial, condition_id: id, score: null, answered: false };
       rows.set(identifier, row);
@@ -197,7 +206,7 @@
       card.append(heading, play, slider, label, confirm); $('conditions').append(card);
     });
     ready = true; $('reference').disabled = $('pause').disabled = false; buttons();
-    status(context.sampleRate === 48000 ? 'Ready. Play every stimulus before rating.' : `Warning: audio context is ${context.sampleRate} Hz, not 48000 Hz. This is recorded for owner review.`);
+    status(context.sampleRate === 48000 ? (volumeSetup ? 'Play the reference and choose a comfortable listening level.' : 'Ready. Play every stimulus before rating.') : `Warning: audio context is ${context.sampleRate} Hz, not 48000 Hz. This is recorded for owner review.`);
   }
   async function navigate(direction) {
     if (!ready || navigating || !writable()) return;
@@ -228,6 +237,9 @@
     if (!response.ok) throw new Error('Published configuration is unavailable');
     config = YAML.parse(await response.text());
     if (!Array.isArray(config.pages)) throw new Error('Invalid published configuration');
+    const defaultVolume = config.pages.find(page => page.type === 'volume')?.defaultVolume ?? 0.8;
+    context.volume = Number.isFinite(defaultVolume) && defaultVolume >= 0 && defaultVolume <= 1 ? defaultVolume : 0.8;
+    $('volume').value = String(context.volume);
     const stored = await disk('get');
     if (stored) {
       if (stored.revision !== checkpoint.revision && !stored.pending && stored.changes.length) {
@@ -255,6 +267,11 @@
       } catch (failure) { if (failure.status === 403) { locked = true; buttons(); error('Invitation revoked or unavailable.'); } }
     }, 8000);
   }
+  $('volume-continue').onclick = async () => {
+    if (!ready || !writable()) return;
+    volumeSetup = false;
+    try { await loadPage(); } catch (failure) { error(failure.message); }
+  };
   $('reference').onclick = async () => { await context.resume(); control.playReference(); };
   $('pause').onclick = () => control?.pause();
   $('volume').oninput = () => { if (context) context.volume = $('volume').valueAsNumber; };

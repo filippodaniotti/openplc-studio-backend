@@ -137,7 +137,10 @@ class ParticipantService:
 
     async def checkpoint(self, digest: str):
         study, head, checkpoint = await self.context(digest)
-        return self.public_checkpoint(study, head, checkpoint)
+        from plc_platform_backend.runs.runs_repository import get_runs_repository
+
+        run = await get_runs_repository().get_run(study.run_id)
+        return {**self.public_checkpoint(study, head, checkpoint), "run_name": run.name if run else None}
 
     async def _save(self, digest: str, request, update: dict, completed: bool = False):
         study, head, current = await self.context(digest)

@@ -5,19 +5,20 @@
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>MUSHRA listening test</title><link rel="stylesheet" href="player.css"></head>
 <body><main>
   <h1 id="title">MUSHRA listening test</h1>
-  <p>Use headphones in a quiet environment. Compare each anonymous stimulus with the reference. Rate quality from 0 (bad) to 100 (excellent). Untouched ratings are unanswered, not zero.</p>
+  <p id="instructions">Use headphones in a quiet environment. Compare each anonymous stimulus with the reference. Rate quality from 0 (bad) to 100 (excellent). Untouched ratings are unanswered, not zero.</p>
   <p id="break" hidden>Break recommended after each ten trials. Your acknowledged answers are saved; pause now and resume later using your assigned invitation link.</p>
-  <p>Quality scale: 0–20 bad · 20–40 poor · 40–60 fair · 60–80 good · 80–100 excellent.</p>
+  <p id="quality-scale">Quality scale: 0–20 bad · 20–40 poor · 40–60 fair · 60–80 good · 80–100 excellent.</p>
   <p id="status" role="status" aria-live="polite">Waiting for your listening session…</p>
   <p id="error" role="alert" hidden></p>
   <div class="toolbar"><button id="reference" disabled>Play reference</button><button id="pause" disabled>Pause</button>
-    <label>Common playback volume <input id="volume" type="range" min="0" max="1" step="0.01" value="0.8"></label>
-    <label><input id="loop" type="checkbox" checked> Loop excerpt</label>
+    <label id="volume-label">Common playback volume <input id="volume" type="range" min="0" max="1" step="0.01" value="0.8"></label>
+    <label><input id="loop" type="checkbox"> Loop excerpt</label>
     <progress id="position" max="1" value="0" aria-label="Playback position"></progress>
   </div>
   <div id="conditions" class="conditions"></div>
-  <div class="toolbar"><button id="previous" disabled>Previous trial</button><button id="save" disabled>Save checkpoint</button><button id="next" disabled>Next trial</button><button id="retry" hidden>Retry unchanged request</button><button id="discard" hidden>Discard local draft and reload saved answers</button></div>
-  <small>Sliders start at 50 but remain unanswered until you interact or explicitly confirm. Play a stimulus before rating it. Save acknowledgements are required before advancing or finishing.</small>
+  <button id="volume-continue" hidden disabled>Keep this volume and begin trials</button>
+  <div class="toolbar" id="trial-navigation"><button id="previous" disabled>Previous trial</button><button id="save" disabled>Save checkpoint</button><button id="next" disabled>Next trial</button><button id="retry" hidden>Retry unchanged request</button><button id="discard" hidden>Discard local draft and reload saved answers</button></div>
+  <small id="rating-help">Sliders start at 50 but remain unanswered until you interact or explicitly confirm. Play a stimulus before rating it. Save acknowledgements are required before advancing or finishing.</small>
 </main><footer>
   <strong>Third-Party Modified Version of the webMUSHRA Software</strong><br>
   Original audio engine © AudioLabs 2017; modified by PLC platform on 2026-10-06. No endorsement is implied.

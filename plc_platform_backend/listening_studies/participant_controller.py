@@ -65,9 +65,9 @@ async def exchange(request: Request, response: Response, invitation: InvitationE
 
 @router.get("/{session_id}/checkpoint")
 async def get_checkpoint(session_id: UUID, request: Request, response: Response, service: Service):
-    _, study, head, checkpoint = await authorized_context(request, session_id, service)
+    digest, _, _, _ = await authorized_context(request, session_id, service)
     response.headers["Cache-Control"] = "no-store"
-    return service.public_checkpoint(study, head, checkpoint)
+    return await service.checkpoint(digest)
 
 
 @router.post("/{session_id}/consent")
