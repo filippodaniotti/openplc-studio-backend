@@ -20,7 +20,7 @@ class RunStatus(str, Enum):
 
 
 class RunFailure(BaseModel):
-    code: Literal["human_no_eligible_excerpts", "execution_failed"]
+    code: Literal["human_no_eligible_excerpts", "human_audio_budget_exceeded", "execution_failed"]
     message: str
     guidance: str
 

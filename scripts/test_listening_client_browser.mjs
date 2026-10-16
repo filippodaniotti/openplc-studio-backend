@@ -26,7 +26,7 @@ const server = createServer(async (req, res) => {
       type = 'text/html'; content = `<!doctype html><iframe id="player" src="/api/listening-client/index.html"></iframe><script>
       window.events=[];window.addEventListener('message',event=>{events.push(event.data.type);if(event.data.type==='plc-listening-ready')document.getElementById('player').contentWindow.postMessage({type:'plc-listening-init',nonce:'test-nonce',checkpoint:${JSON.stringify(state)},theme:{dark:true,primary:'rgb(9, 100, 220)'}},location.origin);if(event.data.type==='plc-listening-reload')location.reload();});</script>`;
     } else if (req.url.startsWith('/api/listening-client/')) {
-      const relative = req.url.slice('/api/listening-client/'.length);
+      const relative = new URL(req.url, 'http://localhost').pathname.slice('/api/listening-client/'.length);
       if (!/^[a-zA-Z0-9/.+-]+$/.test(relative) || relative.includes('..')) throw new Error('Invalid asset path');
       content = await readFile(resolve(assets, relative));
       type = relative.endsWith('.js') ? 'text/javascript' : relative.endsWith('.css') ? 'text/css' : 'text/html';
@@ -59,8 +59,16 @@ try {
   const targets = await (await fetch(`http://127.0.0.1:${debugPort}/json`)).json();
   socket = new WebSocket(targets.find(target => target.type === 'page').webSocketDebuggerUrl);
   await new Promise(resolve => socket.addEventListener('open', resolve, { once: true }));
-  let sequence = 0; const waits = new Map(); const exceptions = [];
-  socket.addEventListener('message', event => { const message = JSON.parse(event.data); if (message.id) { const pair = waits.get(message.id); waits.delete(message.id); message.error ? pair.reject(new Error(JSON.stringify(message.error))) : pair.resolve(message.result); } else if (message.method === 'Runtime.exceptionThrown') exceptions.push(message.params.exceptionDetails); });
+  let sequence = 0, loadWaiter; const waits = new Map(); const exceptions = [];
+  socket.addEventListener('message', event => {
+    const message = JSON.parse(event.data);
+    if (message.id) {
+      const pair = waits.get(message.id); waits.delete(message.id);
+      if (message.error) pair.reject(new Error(JSON.stringify(message.error)));
+      else pair.resolve(message.result);
+    } else if (message.method === 'Runtime.exceptionThrown') exceptions.push(message.params.exceptionDetails);
+    else if (message.method === 'Page.loadEventFired') loadWaiter?.();
+  });
   const cdp = (method, params = {}) => new Promise((resolve, reject) => { const id = ++sequence; waits.set(id, { resolve, reject }); socket.send(JSON.stringify({ id, method, params })); });
   const evaluate = async expression => {
     const result = await cdp('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true });
@@ -68,16 +76,24 @@ try {
   };
   const frame = 'document.getElementById("player").contentWindow';
   const wait = async predicate => { for (let i = 0; i < 150; i++) { if (await evaluate(predicate)) return; await delay(100); } throw new Error(`Timed out: ${predicate}; ${await evaluate(`${frame}.document.body.innerText`)}`); };
+  const enterTrials = async () => {
+    await wait(`document.getElementById('player')?.contentWindow?.document.getElementById('volume-continue')?.disabled === false`);
+    await evaluate(`${frame}.document.getElementById('volume-continue').click()`);
+    await wait(`${frame}.document.querySelectorAll('.condition').length===3`);
+  };
   await cdp('Runtime.enable'); await cdp('Page.enable'); await cdp('Page.navigate', { url: `http://127.0.0.1:${port}/` });
-  await wait(`${frame}.document.querySelectorAll('.condition').length===3`);
+  await enterTrials();
   assert.equal(await evaluate(`${frame}.document.body.classList.contains('dark')`), true);
-  assert.equal(await evaluate(`${frame}.document.querySelectorAll('.value')[0].textContent`), 'Unanswered');
+  assert.equal(await evaluate(`${frame}.document.querySelectorAll('.value')[0].textContent`), '—');
+  assert.equal(await evaluate(`${frame}.document.querySelectorAll('.value')[0].getAttribute('aria-label')`), 'Unanswered');
   // First save is committed by the server but its acknowledgement is lost.
   await evaluate(`(async()=>{const w=${frame};w.document.querySelector('.condition button').click();await new Promise(r=>setTimeout(r,100));const slider=w.document.querySelector('.rating');slider.value='0';slider.dispatchEvent(new w.Event('input'));w.document.getElementById('save').click();})()`);
   await wait(`!${frame}.document.getElementById('retry').hidden`);
   assert.equal(state.responses.find(row => row.condition_id === 'plc-0').score, 0);
+  const reloaded = new Promise(resolve => { loadWaiter = resolve; });
   await cdp('Page.reload');
-  await wait(`${frame}.document.querySelectorAll('.condition').length===3`);
+  await reloaded;
+  await enterTrials();
   assert.equal(state.revision, 2); assert.equal(requests.length, 2);
   assert.deepEqual(requests[0], requests[1]);
   assert.equal(await evaluate(`${frame}.document.querySelectorAll('.value')[0].textContent`), '0');

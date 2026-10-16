@@ -11,7 +11,8 @@ function setup() {
       textContent: '', disabled: false, checked: false, value: '50',
       cloneNode() { return { childNodes: [] }; },
       get valueAsNumber() { return Number(this.value); },
-      classList: { toggle() {} }, addEventListener() {}, focus() {},
+      classList: { toggle() {}, remove() {} }, addEventListener() {}, focus() {},
+      setAttribute(name, value) { this[name] = String(value); }, getAttribute(name) { return this[name] ?? null; },
       contains() { return false; }, closest() { return null; },
     });
     return elements.get(id);
@@ -27,20 +28,20 @@ function setup() {
     ready = true; volumeSetup = false;
     context = { resume: async () => {}, state: 'running' };
     control = { audioPlaying: false, pause() { this.audioPlaying = false; },
-      getPosition: () => 0, getDuration: () => 100, setPosition(n) { this.position = n; },
+      getPosition() { return this.position ?? 0; }, getDuration: () => 100, setPosition(n) { this.position = n; },
       setLoopingActive(value) { this.loop = value; } };
     let navigations = 0;
     navigate = async () => { navigations++; };
-    globalThis.api = { registerTrack, focusTrack, playTrack, trialKeydown, control,
+    globalThis.api = { registerTrack, focusTrack, playTrack, trialKeydown, control, context,
       get navigations() { return navigations; },
       get focused() { return focusedTrack; }, get changes() { return changes; },
       lock() { locked = true; }, volume() { volumeSetup = true; } };
   `), sandbox);
   const api = sandbox.api;
-  const reference = { element: element('reference'), play() { api.control.audioPlaying = true; } };
-  const condition = { element: element('condition'), slider: element('slider'), confirm: element('confirm'),
+  const reference = { element: element('reference'), button: element('reference'), name: 'Reference', play() { api.control.audioPlaying = true; } };
+  const condition = { element: element('condition'), button: element('play'), name: 'Condition A', slider: element('slider'), confirm: element('confirm'),
     label: element('label'), row: { trial_id: 't', condition_id: 'a' },
-    play() { api.control.audioPlaying = true; } };
+    play() { api.control.audioPlaying = true; api.control.position = 0; } };
   condition.slider.disabled = true;
   api.registerTrack(reference); api.registerTrack(condition); api.focusTrack(0);
   function press(key, shiftKey = false) {
@@ -51,6 +52,32 @@ function setup() {
   }
   return { api, condition, element, press };
 }
+
+test('play buttons show one pressed state, switch without rewinding, and toggle pause', async () => {
+  const { api, element } = setup();
+  api.control.position = 40;
+  await api.playTrack(0);
+  assert.equal(element('reference').getAttribute('aria-pressed'), 'true');
+  await api.playTrack(1);
+  assert.equal(api.control.position, 40);
+  assert.equal(element('reference').getAttribute('aria-pressed'), 'false');
+  assert.equal(element('play').getAttribute('aria-pressed'), 'true');
+  assert.equal(element('play').textContent, 'Pause');
+  await api.playTrack(1);
+  assert.equal(element('play').getAttribute('aria-pressed'), 'false');
+  assert.equal(element('play').textContent, 'Play');
+});
+
+test('latest play selection wins when audio resume resolves out of order', async () => {
+  const { api, element } = setup();
+  const pending = [];
+  api.context.resume = () => new Promise(resolve => pending.push(resolve));
+  const first = api.playTrack(0), second = api.playTrack(1);
+  pending[1](); await second;
+  pending[0](); await first;
+  assert.equal(element('play').getAttribute('aria-pressed'), 'true');
+  assert.equal(element('reference').getAttribute('aria-pressed'), 'false');
+});
 
 test('Tab wraps between reference and conditions in both directions', () => {
   const { api, press } = setup();

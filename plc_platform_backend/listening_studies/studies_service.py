@@ -14,6 +14,7 @@ from plc_platform_backend.runs.runs_models import Run
 from .studies_models import ListeningStudyDocument, StudyArtifactSource, StudyStatus
 from .studies_repository import get_listening_studies_repository
 from .participant_models import MAX_RATINGS_PER_SESSION
+from .audio_loading import AudioLoadingLimits, validate_study_audio_budget
 
 
 def _module_index(modules, node_id: str) -> int:
@@ -99,6 +100,7 @@ def prepare_studies(run: Run, testbench: PLCTestbench, root_folder: str) -> list
     study = assemble_study([bundle for bundle, _ in entries], study_id)
     if sum(len(trial.conditions) for trial in study.definition.trials) > MAX_RATINGS_PER_SESSION:
         raise ValueError(f"Study workload exceeds {MAX_RATINGS_PER_SESSION} ratings per participant; reduce tracks, trials, or repetitions")
+    validate_study_audio_budget(study, AudioLoadingLimits())
     destination = Path(root_folder).resolve() / "listening-studies" / run.id / study_id
     _publish_material(study, entries, destination)
     return [ListeningStudyDocument(

@@ -87,6 +87,18 @@ def test_single_study_covers_all_tracks_and_plc_instances(tmp_path):
     assert set(study.id for study in studies).isdisjoint(study.id for study in different)
 
 
+def test_audio_budget_is_checked_before_any_material_is_published(tmp_path, monkeypatch):
+    from plc_platform_backend.listening_studies.audio_loading import AudioLoadingBudgetError
+
+    run, testbench = prepared_run(tmp_path)
+    monkeypatch.setenv("LISTENING_AUDIO_BUDGET_MIB", "1")
+    with patch("plc_platform_backend.listening_studies.studies_service._publish_material") as publish:
+        with pytest.raises(AudioLoadingBudgetError, match="configured limit is 1 MiB"):
+            prepare_studies(run, testbench, str(tmp_path))
+    publish.assert_not_called()
+    assert not (tmp_path / "listening-studies").exists()
+
+
 def test_ambiguous_module_mappings_fail_instead_of_merging_participants(tmp_path):
     run, testbench = prepared_run(tmp_path)
     node_id = run.modules[ModuleType.PLCAlgorithm][0].node_ids[0]

@@ -20,6 +20,24 @@ def test_static_client_and_free_license_source_are_packaged():
     assert client.get('/listening-client/../participant_service.py').status_code == 404
 
 
+def test_player_assets_revalidate_and_versioned_urls_work():
+    app = FastAPI()
+    client_assets.mount_listening_client(app)
+    client = TestClient(app)
+    revision = 'shared-faders-20261016-2'
+    index = client.get(f'/listening-client/index.html?v={revision}')
+    assert f'player.css?v={revision}' in index.text
+    assert f'player.js?v={revision}' in index.text
+    for asset in ('index.html', 'player.css', 'player.js'):
+        url = f'/listening-client/{asset}?v={revision}'
+        response = client.get(url)
+        assert response.status_code == 200
+        assert response.headers['cache-control'] == 'no-cache'
+        cached = client.get(url, headers={'If-None-Match': response.headers['etag']})
+        assert cached.status_code == 304
+        assert cached.headers['cache-control'] == 'no-cache'
+
+
 def test_source_archive_matches_the_deployed_modifications_and_pin():
     assets = Path(client_assets.__file__).resolve().parent.parent / 'static' / 'listening-client'
     manifest = json.loads((assets / 'upstream.json').read_text())

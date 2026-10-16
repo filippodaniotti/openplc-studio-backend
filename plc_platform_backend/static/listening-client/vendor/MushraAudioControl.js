@@ -7,7 +7,8 @@ This source code is protected by copyright law and international treaties. This 
 
 // Third-Party Modified Version of the webMUSHRA Software — PLC platform,
 // 2026-10-06: remove accidental globals, honor pending fade resets, zero
-// non-looping tails. Original copyright/license notices remain unchanged.
+// non-looping tails. 2026-10-16: retain end/paused-seek positions and cancel
+// pending pause fades on resume. Original copyright/license notices unchanged.
 function MushraAudioControl(_audioContext, _bufferSize, _reference, _conditions, _errorHandler, _createAnchor35, _createAnchor70, _randomize, _switchBack, add_ref_to_conditions=true) {
   this.audioContext = _audioContext;
   this.bufferSize = parseInt(_bufferSize);
@@ -155,7 +156,9 @@ MushraAudioControl.prototype.sendEvent = function(_event) {
 };
 
 MushraAudioControl.prototype.getPosition = function() {
-  return this.audioCurrentPosition;
+  // A paused seek is pending until the next audio callback. Preserve it when
+  // selecting another stimulus rather than restoring the old playhead.
+  return this.audioCurrentPositionRequest !== null ? this.audioCurrentPositionRequest : this.audioCurrentPosition;
 };
 
 MushraAudioControl.prototype.getDuration = function() {
@@ -291,13 +294,17 @@ MushraAudioControl.prototype.process = function(audioProcessingEvent) {
         outputData[sample] = inputData[currentPosition++];      
       }
       if (currentPosition >= this.audioLoopEnd) {
-        currentPosition = this.audioLoopStart;
         if (loopingActive === false) {
-          this.surpressLoop();
+          // Leave the cursor at the end. Only an explicit new Play/rewind
+          // restarts; merely selecting a condition must not imply a rewind.
+          currentPosition = this.audioLoopEnd;
           this.audioPlaying = false;
+          this.audioCurrentPositionRequest = null;
+          fadingActive = 0;
           for (var tail = sample + 1; tail < outputBuffer.length; ++tail) outputData[tail] = 0;
           break;
         }
+        currentPosition = this.audioLoopStart;
       }
     }   
   }
@@ -317,6 +324,9 @@ MushraAudioControl.prototype.process = function(audioProcessingEvent) {
   this.audioCurrentPosition = currentPosition;  
   this.audioFadingCurrentPosition = fadingCurrentPosition;
   this.audioFadingActive = fadingActive;
+  if (!this.audioPlaying && currentPosition === this.audioLoopEnd) {
+    this.sendEvent({ name: 'playbackEnded' });
+  }
   
   var event = {
   	name: 'processUpdate',
@@ -419,7 +429,9 @@ MushraAudioControl.prototype.play = function(_stimulus, _isReference) {
     this.fadeOut(_stimulus);
   } else {
     this.audioStimulus = _stimulus;
-    if (this.audioPlaying === false) {      
+    if (this.audioPlaying === false || (this.audioFadingIn === null &&
+        (this.audioFadingActiveRequest === 1 || this.audioFadingActive === 1))) {
+      // A quick resume must cancel a pending pause fade, not finish pausing.
       this.fadeIn(_stimulus);
     }          
   }    

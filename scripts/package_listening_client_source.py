@@ -15,11 +15,11 @@ def package(upstream: Path) -> None:
     if revision != PIN:
         raise ValueError(f"Expected pinned upstream {PIN}, got {revision}")
     tracked = subprocess.run(["git", "-C", str(upstream), "ls-files", "-z"], check=True, capture_output=True).stdout.decode().split("\0")
-    manifest = {"upstream_commit": PIN, "modified_on": "2026-10-06", "version": "Third-Party Modified Version of the webMUSHRA Software", "source_archive": "source.zip"}
+    manifest = {"upstream_commit": PIN, "modified_on": "2026-10-16", "version": "Third-Party Modified Version of the webMUSHRA Software", "source_archive": "source.zip"}
     (ASSETS / "upstream.json").write_text(json.dumps(manifest, indent=2))
     with ZipFile(ASSETS / "source.zip", "w", compression=ZIP_DEFLATED) as archive:
         def add(name: str, path: Path):
-            info = ZipInfo(name, date_time=(2026, 10, 6, 0, 0, 0))
+            info = ZipInfo(name, date_time=(2026, 10, 16, 0, 0, 0))
             info.compress_type = ZIP_DEFLATED
             archive.writestr(info, path.read_bytes())
         for relative in sorted(filter(None, tracked)):

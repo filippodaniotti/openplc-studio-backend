@@ -589,8 +589,11 @@ async def _launch_run(
                              guidance="Check worker logs for details, then adjust and retry.")
         if any(module.name == "HumanCalculator" for module in run.modules[ModuleType.OutputAnalyser]):
             from plctestbench.human_listening import NoEligibleExcerptsError
+            from plc_platform_backend.listening_studies.audio_loading import AudioLoadingBudgetError
             if isinstance(error, NoEligibleExcerptsError):
                 failure = RunFailure(code="human_no_eligible_excerpts", message=error.user_message, guidance=error.guidance)
+            elif isinstance(error, AudioLoadingBudgetError):
+                failure = RunFailure(code="human_audio_budget_exceeded", message=error.user_message, guidance=error.guidance)
         logger.exception("Run %s (%s) failed during execution", run.id, run.name)
         await _transition_run_status(
             run.id,

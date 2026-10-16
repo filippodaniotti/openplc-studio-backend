@@ -8,6 +8,7 @@ from uuid import NAMESPACE_URL, uuid4, uuid5
 from fastapi import HTTPException
 
 from .participant_models import CheckpointSave, ConsentAcknowledgement, InstructionsUpdate, SessionExclusion, StudyClose
+from .audio_loading import AudioLoadingLimits
 from .participant_repository import ParticipantRepository
 from .studies_models import ListeningStudyDocument, SessionHead, StudyStatus
 from .studies_repository import ListeningStudiesRepository
@@ -133,6 +134,9 @@ class ParticipantService:
             "revision": head.revision, "definition": study.definition,
             "instructions": study.instructions, "consent": study.consent,
             **checkpoint["payload"],
+            # Runtime policy, not immutable study content or participant input.
+            # This also applies to existing invitations without rewriting audio.
+            "audio_loading_limits": AudioLoadingLimits().public_limits(),
         }
 
     async def checkpoint(self, digest: str):

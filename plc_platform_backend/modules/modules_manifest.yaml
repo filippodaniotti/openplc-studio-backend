@@ -545,6 +545,10 @@ OutputAnalyser:
         default: mushra
         values:
           - mushra
+      - name: use_full_track
+        type: bool
+        default: true
+        values: null
       - name: stimulus_length
         type: int
         default: 3000
@@ -555,7 +559,7 @@ OutputAnalyser:
           step: 1
       - name: single_loss_per_stimulus
         type: bool
-        default: true
+        default: false
         values: null
       - name: trials_per_track
         type: int
