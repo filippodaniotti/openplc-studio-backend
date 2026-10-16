@@ -5,9 +5,27 @@
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>MUSHRA listening test</title><link rel="stylesheet" href="player.css"></head>
 <body><main>
   <h1 id="title">MUSHRA listening test</h1>
-  <p id="instructions">Use headphones in a quiet environment. Compare each anonymous stimulus with the reference. Rate quality from 0 (bad) to 100 (excellent). Untouched ratings are unanswered, not zero.</p>
+  <div id="instructions">
+    <p>Use headphones in a quiet environment. Compare each anonymous stimulus with the reference. Rate quality from <strong>0 (bad)</strong> to <strong>100 (excellent)</strong>. Untouched ratings are unanswered, not zero.</p>
+  </div>
   <p id="break" hidden>Break recommended after each ten trials. Your acknowledged answers are saved; pause now and resume later using your assigned invitation link.</p>
   <p id="quality-scale">Quality scale: 0–20 bad · 20–40 poor · 40–60 fair · 60–80 good · 80–100 excellent.</p>
+  <details id="keyboard-help" hidden>
+    <summary>Keyboard controls — highlighted track</summary>
+    <ul>
+      <li><kbd>Space</kbd> — Play / pause.</li>
+      <li><kbd>←</kbd> — Move playback to the beginning.</li>
+      <li><kbd>↑</kbd> / <kbd>↓</kbd> — Increase / decrease the score by 5.</li>
+      <li><kbd>Shift + ↑</kbd> / <kbd>Shift + ↓</kbd> — Increase / decrease the score by 20.</li>
+      <li><kbd>Tab</kbd> — Focus the next track.</li>
+      <li><kbd>Shift + Tab</kbd> — Focus the previous track.</li>
+      <li><kbd>Enter</kbd> — Next trial, once all ratings are confirmed.</li>
+      <li><kbd>R</kbd> — Toggle repeat playback.</li>
+      <li><kbd>Esc</kbd> — Leave track navigation to Tab through other controls and links.</li>
+    </ul>
+    <strong>Focusing and rating tracks</strong>
+    <p>Click anywhere on a track to focus it. The focused track is highlighted. The reference cannot be scored. Play each stimulus before scoring; changing its score confirms it. To keep the starting score of 50, click “Confirm current value”.</p>
+  </details>
   <p id="status" role="status" aria-live="polite">Waiting for your listening session…</p>
   <p id="error" role="alert" hidden></p>
   <div class="toolbar"><button id="reference" disabled>Play reference</button><button id="pause" disabled>Pause</button>

@@ -11,10 +11,74 @@
   let checkpoint, nonce, context, control, config, api, storageKey, database;
   let index = 0, pending = null, flight = null, loader = null, generation = 0;
   let volumeSetup = true;
-  const trialInstructions = $('instructions').textContent;
+  const trialInstructions = $('instructions').cloneNode(true);
   const volumeInstructions = 'Put on your headphones and play the reference excerpt. Starting at a low device volume, adjust the playback slider and your device volume until the audio is clear and comfortable, never uncomfortably loud. When ready, continue to the trials. Keep the same headphones, playback volume, and device volume for the rest of the study so your ratings are comparable.';
   let ready = false, locked = false, navigating = false, pollTimer, saveTimer;
   const rows = new Map(), changes = new Map();
+  let tracks = [], focusedTrack = 0, playingTrack = -1;
+  function focusTrack(position, moveKeyboardFocus = false) {
+    focusedTrack = position;
+    tracks.forEach((track, i) => {
+      track.element.classList.toggle('track-focused', i === position);
+      track.element.tabIndex = i === position ? 0 : -1;
+    });
+    if (moveKeyboardFocus) tracks[position]?.element.focus({ preventScroll: true });
+  }
+  function registerTrack(track) {
+    const position = tracks.length;
+    tracks.push(track);
+    track.element.addEventListener('pointerdown', () => focusTrack(position, true));
+    track.element.addEventListener('click', () => focusTrack(position));
+    track.element.addEventListener('focusin', () => focusTrack(position));
+  }
+  async function playTrack(position, toggle = false) {
+    const track = tracks[position], engine = control;
+    if (!track || !ready || !writable() || navigating) return;
+    focusTrack(position);
+    if (toggle && engine.audioPlaying && playingTrack === position) {
+      engine.pause(); return;
+    }
+    try {
+      await context.resume();
+      if (engine !== control || !ready || !writable() || navigating) return;
+      if (context.state !== 'running') throw new Error('Audio could not start. Use a supported desktop browser.');
+      if (engine.getPosition() >= engine.getDuration()) engine.setPosition(0, false);
+      track.play();
+      playingTrack = position;
+      if (track.slider) track.slider.disabled = track.confirm.disabled = false;
+    } catch (failure) { error(failure.message); }
+  }
+  function trialKeydown(event) {
+    if (volumeSetup || !ready || !writable() || navigating || event.altKey || event.ctrlKey || event.metaKey) return;
+    if (event.target.closest('a, textarea, select, input:not([type="range"]):not([type="checkbox"])')) return;
+    const inTrack = tracks.some(track => track.element === event.target || track.element.contains(event.target));
+    const key = event.key;
+    if (!inTrack) return;
+    if (![' ', 'ArrowLeft', 'ArrowUp', 'ArrowDown', 'Tab', 'Enter', 'r', 'R', 'Escape'].includes(key)) return;
+    if (key === 'Escape') {
+      event.preventDefault();
+      const exit = $('next').disabled ? $('save') : $('next');
+      exit.focus();
+      return;
+    }
+    event.preventDefault();
+    if (event.repeat && !['ArrowUp', 'ArrowDown'].includes(key)) return;
+    const track = tracks[focusedTrack];
+    if (key === 'Tab') focusTrack((focusedTrack + (event.shiftKey ? -1 : 1) + tracks.length) % tracks.length, true);
+    else if (key === ' ') void playTrack(focusedTrack, true);
+    else if (key === 'ArrowLeft') control.setPosition(0, false);
+    else if (key === 'ArrowUp' || key === 'ArrowDown') {
+      if (!track?.slider || track.slider.disabled) return;
+      const step = event.shiftKey ? 20 : 5;
+      track.slider.value = String(Math.max(0, Math.min(100, track.slider.valueAsNumber + (key === 'ArrowUp' ? step : -step))));
+      changed(track.row, track.slider, track.label);
+    } else if (key === 'Enter' && !$('next').disabled) void navigate(1);
+    else if (key.toLowerCase() === 'r') {
+      $('loop').checked = !$('loop').checked;
+      control.setLoopingActive($('loop').checked);
+    }
+  }
+  document.addEventListener('keydown', trialKeydown);
   const key = row => `${row.trial_id}:${row.condition_id}`;
   const status = text => { $('status').textContent = text; };
   const error = text => { $('error').textContent = text; $('error').hidden = !text; };
@@ -132,6 +196,7 @@
     loader?.abort(); loader = null;
     if (control) { control.freeAudio(); control = null; }
     ready = false;
+    tracks = []; focusedTrack = 0; playingTrack = -1;
   }
   async function loadPage() {
     const currentGeneration = ++generation;
@@ -139,8 +204,10 @@
     $('reference').disabled = $('pause').disabled = true;
     const trial = checkpoint.trial_order[volumeSetup ? 0 : index], page = config.pages.find(page => page.id === trial);
     const volumePage = config.pages.find(page => page.type === 'volume');
-    $('instructions').textContent = volumeSetup ? (volumePage?.content || volumeInstructions) : trialInstructions;
-    for (const id of ['quality-scale', 'trial-navigation', 'rating-help', 'conditions']) $(id).hidden = volumeSetup;
+    if (volumeSetup) $('instructions').textContent = volumePage?.content || volumeInstructions;
+    else $('instructions').replaceChildren(...Array.from(trialInstructions.childNodes, node => node.cloneNode(true)));
+    for (const id of ['quality-scale', 'trial-navigation', 'rating-help', 'conditions', 'keyboard-help']) $(id).hidden = volumeSetup;
+    $('keyboard-help').open = !volumeSetup && index === 0;
     $('volume-continue').hidden = !volumeSetup;
     $('volume-label').hidden = !volumeSetup;
     if (!page || page.type !== 'mushra') throw new Error('Published MUSHRA configuration does not match this invitation');
@@ -185,27 +252,35 @@
     $('break').hidden = volumeSetup || index === 0 || index % 10 !== 0;
     control.addEventListener(event => { if (event.name === 'processUpdate') $('position').value = event.currentSample / reference.getAudioBuffer().length; });
     $('conditions').style.gridTemplateColumns = `repeat(${order.length}, minmax(100px,1fr))`;
+    if (!volumeSetup) {
+      // Replace the reference button to discard the preceding trial's focus listeners.
+      $('reference').replaceWith($('reference').cloneNode(true));
+      registerTrack({ element: $('reference'), stimulus: reference, play: () => control.playReference() });
+      $('reference').onclick = () => void playTrack(0);
+    }
     (volumeSetup ? [] : order).forEach((id, position) => {
       const identifier = `${trial}:${id}`;
       const row = rows.get(identifier) ?? { trial_id: trial, condition_id: id, score: null, answered: false };
       rows.set(identifier, row);
       const card = document.createElement('section'); card.className = 'condition';
+      card.setAttribute('role', 'group');
+      card.setAttribute('aria-label', `Stimulus ${String.fromCharCode(65 + position)}`);
       const heading = document.createElement('h2'); heading.textContent = `Stimulus ${String.fromCharCode(65 + position)}`;
       const play = document.createElement('button'); play.textContent = 'Play';
       const slider = document.createElement('input'); slider.type = 'range'; slider.min = '0'; slider.max = '100'; slider.step = 'any'; slider.className = 'rating';
       slider.value = String(row.score ?? 50); slider.disabled = true; slider.setAttribute('aria-label', `${heading.textContent} quality, 0 bad to 100 excellent`);
       const label = document.createElement('output'); label.className = 'value'; label.textContent = row.answered ? String(row.score) : 'Unanswered';
       const confirm = document.createElement('button'); confirm.textContent = 'Confirm current value'; confirm.disabled = true;
-      play.onclick = async () => {
-        try { await context.resume(); if (context.state !== 'running') throw new Error('Audio could not start. Use a supported desktop browser.'); control.playCondition(position); slider.disabled = confirm.disabled = !writable(); }
-        catch (failure) { error(failure.message); }
-      };
+      const trackPosition = tracks.length;
+      registerTrack({ element: card, stimulus: stimuli.get(id), play: () => control.playCondition(position), row, slider, label, confirm });
+      play.onclick = () => void playTrack(trackPosition);
       slider.addEventListener('input', () => changed(row, slider, label));
       slider.addEventListener('pointerup', () => { if (!slider.disabled) changed(row, slider, label); });
       confirm.onclick = () => changed(row, slider, label);
       card.append(heading, play, slider, label, confirm); $('conditions').append(card);
     });
     ready = true; $('reference').disabled = $('pause').disabled = false; buttons();
+    if (!volumeSetup) focusTrack(0, true);
     status(context.sampleRate === 48000 ? (volumeSetup ? 'Play the reference and choose a comfortable listening level.' : 'Ready. Play every stimulus before rating.') : `Warning: audio context is ${context.sampleRate} Hz, not 48000 Hz. This is recorded for owner review.`);
   }
   async function navigate(direction) {
