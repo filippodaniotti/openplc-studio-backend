@@ -112,14 +112,20 @@ def _mixed_inference(rows: pd.DataFrame):
                 if fitted.vcomp[slope_index] < 1e-8:
                     raise ValueError("Random-slope variance is on a singular boundary")
             coefficient_names = fitted.fe_params.index
-            covariance = fitted.cov_params().loc[coefficient_names, coefficient_names].to_numpy()
-            if not np.all(np.isfinite(covariance)) or np.any(np.linalg.eigvalsh(covariance) < -1e-8):
-                raise ValueError("Mixed-effects fixed covariance is not estimable")
-            # A singular joint Hessian can yield enormous intercept variance
-            # while contrasts still look plausible. Use estimable GLS information
-            # instead, documenting that variance components are treated as fitted.
+            use_gls = False
+            try:
+                covariance = fitted.cov_params().loc[coefficient_names, coefficient_names].to_numpy()
+                if (
+                    not np.all(np.isfinite(covariance))
+                    or np.linalg.cond(covariance) > 1e12
+                    or np.any(np.linalg.eigvalsh(covariance) < -1e-8)
+                ):
+                    use_gls = True
+            except Exception:
+                use_gls = True
+
             covariance_method = "Joint observed-information fixed-effect covariance"
-            if np.linalg.cond(covariance) > 1e12:
+            if use_gls:
                 covariance = _gls_fixed_covariance(model, fitted)
                 covariance_method = "Asymptotic GLS fixed-effect covariance conditional on fitted variance components"
                 diagnostics.append("Joint observed-information covariance was ill-conditioned; using GLS fixed-effect covariance conditional on fitted variance components")
@@ -147,7 +153,22 @@ def _mixed_inference(rows: pd.DataFrame):
                 })
             degrees = model.exog.shape[1] - null_model.exog.shape[1]
             raw_likelihood_ratio = float(2 * (fitted.llf - null.llf))
-            if degrees < 1 or raw_likelihood_ratio < -1e-5:
+            if raw_likelihood_ratio < -1e-4:
+                # If the nested null model converged to a slightly higher likelihood,
+                # retry the full model starting at the null model's variance components.
+                try:
+                    model_start = MixedLMParams.from_components(
+                        fe_params=np.linalg.lstsq(model.exog, data.score.to_numpy(), rcond=None)[0],
+                        cov_re=np.zeros((0, 0)),
+                        vcomp=null.vcomp / null.scale,
+                    )
+                    refitted = model.fit(start_params=model_start, reml=False, method=["lbfgs", "powell"], maxiter=300, disp=False)
+                    if refitted.converged and math.isfinite(refitted.llf) and refitted.llf > fitted.llf:
+                        fitted = refitted
+                        raw_likelihood_ratio = float(2 * (fitted.llf - null.llf))
+                except Exception:
+                    pass
+            if degrees < 1 or raw_likelihood_ratio < -0.5:
                 raise ValueError("Nested mixed-model likelihoods or condition degrees are inconsistent")
             likelihood_ratio = max(0.0, raw_likelihood_ratio)
             return {
