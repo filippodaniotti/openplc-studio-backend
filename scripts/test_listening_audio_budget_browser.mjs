@@ -118,7 +118,7 @@ try {
       assert.equal(await evaluate(`${frame}.document.getElementById('error').textContent`), '');
       if (budget === 0) {
         const doc = `${frame}.document`, first = `${doc}.querySelectorAll('.condition .play-toggle')[0]`, second = `${doc}.querySelectorAll('.condition .play-toggle')[2]`;
-        const dimensions = () => evaluate(`['reference','position'].map(id=>{const r=${doc}.getElementById(id).getBoundingClientRect();return [r.width,r.left];})`);
+        const dimensions = () => evaluate(`[${doc}.getElementById('reference'),${doc}.getElementById('position'),...${doc}.querySelectorAll('.condition h2')].map(e=>{const r=e.getBoundingClientRect();return [r.width,r.left];})`);
         const idleDimensions = await dimensions();
         await evaluate(`${first}.click()`);
         await wait(`Number(${doc}.getElementById('position').value) > .015`);
