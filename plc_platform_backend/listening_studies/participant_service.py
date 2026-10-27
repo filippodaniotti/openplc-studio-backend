@@ -63,9 +63,15 @@ def validate_ratings(study: ListeningStudyDocument, request: CheckpointSave) -> 
 
 
 class ParticipantService:
-    def __init__(self, studies: ListeningStudiesRepository, participants: ParticipantRepository):
+    def __init__(
+        self,
+        studies: ListeningStudiesRepository,
+        participants: ParticipantRepository,
+        runs_repository=None,
+    ):
         self.studies = studies
         self.participants = participants
+        self.runs_repository = runs_repository
 
     async def study(self, study_id: str) -> ListeningStudyDocument:
         study = await self.studies.get(study_id)
@@ -141,10 +147,22 @@ class ParticipantService:
 
     async def checkpoint(self, digest: str):
         study, head, checkpoint = await self.context(digest)
-        from plc_platform_backend.runs.runs_repository import get_runs_repository
+        run_name = None
+        runs_repo = self.runs_repository
+        if runs_repo is None:
+            try:
+                from plc_platform_backend.runs.runs_repository import get_runs_repository
 
-        run = await get_runs_repository().get_run(study.run_id)
-        return {**self.public_checkpoint(study, head, checkpoint), "run_name": run.name if run else None}
+                runs_repo = get_runs_repository()
+            except Exception:
+                runs_repo = None
+        if runs_repo is not None:
+            try:
+                run = await runs_repo.get_run(study.run_id)
+                run_name = run.name if run else None
+            except Exception:
+                run_name = None
+        return {**self.public_checkpoint(study, head, checkpoint), "run_name": run_name}
 
     async def _save(self, digest: str, request, update: dict, completed: bool = False):
         study, head, current = await self.context(digest)

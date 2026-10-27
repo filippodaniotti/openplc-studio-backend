@@ -19,7 +19,13 @@ COOKIE_PREFIX = "plc_listening_session_"
 
 @lru_cache
 def get_participant_service() -> ParticipantService:
-    return ParticipantService(get_listening_studies_repository(), get_participant_repository())
+    from plc_platform_backend.runs.runs_repository import get_runs_repository
+
+    return ParticipantService(
+        get_listening_studies_repository(),
+        get_participant_repository(),
+        get_runs_repository(),
+    )
 
 
 Service = Annotated[ParticipantService, Depends(get_participant_service)]

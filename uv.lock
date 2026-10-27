@@ -1110,7 +1110,7 @@ requires-dist = [
     { name = "dramatiq", extras = ["redis"], specifier = ">=1.18.0,<2.0.0" },
     { name = "fastapi", extras = ["standard"], specifier = ">=0.115.6,<0.116.0" },
     { name = "motor", specifier = ">=3.7.0,<4.0.0" },
-    { name = "plctestbench", git = "https://github.com/CIMIL/plc-testbench?rev=cd91ee68331ace002a794fe7014dbd863304f261" },
+    { name = "plctestbench", git = "https://github.com/CIMIL/plc-testbench?rev=5a2056fc35b89b01ab5ccf0cb1c38ceabb4266dd" },
     { name = "pydantic-settings", specifier = ">=2.7.1,<3.0.0" },
     { name = "statsmodels", specifier = ">=0.14.4,<0.15" },
     { name = "uvicorn", specifier = ">=0.34.0,<0.35.0" },
@@ -1131,7 +1131,7 @@ docs = [
 [[package]]
 name = "plctestbench"
 version = "0.10.0"
-source = { git = "https://github.com/CIMIL/plc-testbench?rev=cd91ee68331ace002a794fe7014dbd863304f261#cd91ee68331ace002a794fe7014dbd863304f261" }
+source = { git = "https://github.com/CIMIL/plc-testbench?rev=5a2056fc35b89b01ab5ccf0cb1c38ceabb4266dd#5a2056fc35b89b01ab5ccf0cb1c38ceabb4266dd" }
 dependencies = [
     { name = "anytree" },
     { name = "burg-plc", marker = "sys_platform == 'linux'" },
