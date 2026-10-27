@@ -11,6 +11,9 @@ from plc_platform_backend.commons.logging_config import configure_logging
 from plc_platform_backend.db import get_mongodb
 from plc_platform_backend.documentation import mount_documentation
 from plc_platform_backend.routers import assets, modules, plugins, runs, runs_ws
+from plc_platform_backend.listening_studies.studies_controller import router as listening_studies_router
+from plc_platform_backend.listening_studies.participant_controller import router as listening_participant_router
+from plc_platform_backend.listening_studies.client_assets import mount_listening_client
 
 configure_logging()
 logger = logging.getLogger(__name__)
@@ -74,6 +77,7 @@ class Lifespans:
 
 app = FastAPI(lifespan=Lifespans([db_setup, storage_setup]))
 mount_documentation(app)
+mount_listening_client(app)
 
 
 @app.get("/health", tags=["health"])
@@ -94,3 +98,5 @@ app.include_router(plugins.router)
 app.include_router(runs.router)
 app.include_router(assets.router)
 app.include_router(runs_ws.router)
+app.include_router(listening_studies_router)
+app.include_router(listening_participant_router)

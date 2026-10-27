@@ -179,9 +179,10 @@ async def get_run_artifacts_archive(
     run_id: str,
     kind: RunArtifactKind,
     runs_service: Annotated[RunsService, Depends(get_runs_service)],
+    ready_only: Annotated[bool, Query()] = False,
 ) -> StreamingResponse:
     try:
-        tar_archive = await runs_service.get_artifacts_archive(run_id, kind)
+        tar_archive = await runs_service.get_artifacts_archive(run_id, kind, ready_only=True) if ready_only else await runs_service.get_artifacts_archive(run_id, kind)
     except ValueError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
     except RunArtifactsUnavailableError as error:

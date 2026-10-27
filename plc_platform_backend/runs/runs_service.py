@@ -30,6 +30,10 @@ from plctestbench.utils import get_class
 from plctestbench.worker import OriginalAudio
 
 from plc_platform_backend import actors
+from plc_platform_backend.listening_studies.studies_service import (
+    prepare_studies,
+    publish_prepared_studies,
+)
 from plc_platform_backend.assets.assets_models import RunArtifactKind, TestbenchNodeDepth
 from plc_platform_backend.assets.assets_repository import (
     AssetsRepository,
@@ -52,6 +56,7 @@ from plc_platform_backend.runs.runs_models import (
     RunDashboardCounts,
     RunDashboardSummary,
     RunDocument,
+    RunFailure,
     RunPage,
     RunProgressMessage,
     RunSortField,
@@ -178,7 +183,12 @@ def _resolve_bundled_model_path(value: Any) -> Any:
     bundled_model = (
         Path(plctestbench.__file__).resolve().parent / "dl_models" / Path(value).name
     )
-    return str(bundled_model) if bundled_model.is_file() else value
+    if bundled_model.is_file():
+        return str(bundled_model)
+    # Editable sibling checkouts keep models at the project root; wheels bundle
+    # them inside the package. Support both without depending on process cwd.
+    checkout_model = Path(plctestbench.__file__).resolve().parent.parent / "dl_models" / Path(value).name
+    return str(checkout_model) if checkout_model.is_file() else value
 
 
 def _get_hydrated_module_settings(
@@ -316,9 +326,10 @@ def _get_hydrated_module_settings(
 
 
 async def _publish_run_completion(
-    run_id: str, run_name: str, success: bool, redis_client: aioredis.Redis
+    run_id: str, run_name: str, success: bool, redis_client: aioredis.Redis,
+    failure: RunFailure | None = None,
 ) -> None:
-    message = RunCompletionMessage(run_id=run_id, run_name=run_name, success=success)
+    message = RunCompletionMessage(run_id=run_id, run_name=run_name, success=success, failure=failure)
     await redis_client.publish(RUN_COMPLETION_CHANNEL, message.model_dump_json())
 
 
@@ -352,9 +363,10 @@ async def _transition_run_status(
     new_status: RunStatus,
     run_repository: RunsRepository,
     redis_client: aioredis.Redis,
+    *, failure: RunFailure | None = None,
 ):
     transitioned_document = await run_repository.transition_status(
-        run_id, expected_status, new_status
+        run_id, expected_status, new_status, **({"failure": failure} if failure else {})
     )
     if transitioned_document is None:
         return None
@@ -424,6 +436,17 @@ def _build_testbench_from_config(
             (cls_, settings_cls(**{s.name: s.value for s in module.settings}))
         )
 
+    if any(module.name == "HumanCalculator" for module in run.modules[ModuleType.OutputAnalyser]):
+        # Distinguish identical configured instances in the shared execution
+        # tree. Separate keys avoid collisions during parent inheritance.
+        for category, workers in (
+            ("simulator", packet_loss_simulators),
+            ("plc", plc_algorithms),
+            ("output", output_analysers),
+        ):
+            for index, (_, settings) in enumerate(workers):
+                settings.add(f"platform_{category}_instance_id", f"{category}-{index}")
+
     testbench_settings = run_service.testbench_settings
     testbench_settings.progress_monitor = lambda caller: InterceptableTqdm
 
@@ -441,8 +464,8 @@ def _build_testbench_from_config(
     plc_modules = run.modules[ModuleType.PLCAlgorithm]
     oa_modules = run.modules[ModuleType.OutputAnalyser]
 
-    n_pls = len(pls_modules)
     n_plc = len(plc_modules)
+    n_oa = len(oa_modules)
 
     for module in (*pls_modules, *plc_modules, *oa_modules):
         module.node_ids = []
@@ -456,18 +479,12 @@ def _build_testbench_from_config(
         for module, node in zip(pls_modules, pls_nodes):
             module.node_ids.append(node.get_id())
 
-        for index, module in enumerate(plc_modules):
-            start = index * n_pls
-            module.node_ids += [
-                node.get_id() for node in plc_nodes[start : start + n_pls]
-            ]
-
-        oa_step = n_pls * n_plc
-        for index, module in enumerate(oa_modules):
-            start = index * oa_step
-            module.node_ids += [
-                node.get_id() for node in oa_nodes[start : start + oa_step]
-            ]
+        # Level-order traversal cycles through child module instances for each
+        # parent; it does not group every parent's children by module index.
+        for index, node in enumerate(plc_nodes):
+            plc_modules[index % n_plc].node_ids.append(node.get_id())
+        for index, node in enumerate(oa_nodes):
+            oa_modules[index % n_oa].node_ids.append(node.get_id())
 
     run.testbench_internal_id = testbench.run_id
     run.status = RunStatus.CREATED
@@ -558,7 +575,25 @@ async def _launch_run(
         thread.join()
         if run_exception is not None:
             raise run_exception
-    except Exception:
+        has_human_studies = any(
+            module.name == "HumanCalculator" for module in run.modules[ModuleType.OutputAnalyser]
+        )
+        if has_human_studies:
+            studies = await asyncio.to_thread(
+                prepare_studies, run, testbench, testbench_settings.root_folder,
+            )
+            await publish_prepared_studies(studies)
+    except Exception as error:
+        # Never expose arbitrary exception strings (paths, credentials, tracebacks).
+        failure = RunFailure(code="execution_failed", message="Run execution failed.",
+                             guidance="Check worker logs for details, then adjust and retry.")
+        if any(module.name == "HumanCalculator" for module in run.modules[ModuleType.OutputAnalyser]):
+            from plctestbench.human_listening import NoEligibleExcerptsError
+            from plc_platform_backend.listening_studies.audio_loading import AudioLoadingBudgetError
+            if isinstance(error, NoEligibleExcerptsError):
+                failure = RunFailure(code="human_no_eligible_excerpts", message=error.user_message, guidance=error.guidance)
+            elif isinstance(error, AudioLoadingBudgetError):
+                failure = RunFailure(code="human_audio_budget_exceeded", message=error.user_message, guidance=error.guidance)
         logger.exception("Run %s (%s) failed during execution", run.id, run.name)
         await _transition_run_status(
             run.id,
@@ -567,13 +602,22 @@ async def _launch_run(
             RunStatus.FAILED,
             run_repository,
             redis_client,
+            failure=failure,
         )
         await _publish_run_completion(
-            run.id, run.name, success=False, redis_client=redis_client
+            run.id, run.name, success=False, redis_client=redis_client, failure=failure
         )
         return
     finally:
         InterceptableTqdm.reset_all()
+
+    if has_human_studies:
+        await _transition_run_status(
+            run.id, run.name, RunStatus.RUNNING, RunStatus.AWAITING_INPUT,
+            run_repository, redis_client,
+        )
+        # Waiting is not completion, and no worker/thread remains alive.
+        return
 
     await _transition_run_status(
         run.id,
@@ -743,6 +787,7 @@ class RunsService:
             counts=RunDashboardCounts(
                 running=active_counts.get(RunStatus.RUNNING.value, 0),
                 queued=active_counts.get(RunStatus.QUEUED.value, 0),
+                awaiting_input=active_counts.get(RunStatus.AWAITING_INPUT.value, 0),
                 completed_recent=recent_terminal_counts.get(
                     RunStatus.COMPLETED.value, 0
                 ),
@@ -783,16 +828,50 @@ class RunsService:
         await _launch_run(run, self.runs_repository, self, self.redis_client)
 
     async def get_artifacts_archive(
-        self, run_id: str, kind: RunArtifactKind
+        self, run_id: str, kind: RunArtifactKind, ready_only: bool = False
     ) -> io.BytesIO:
         run = await self.find_by_id(run_id)
-        if run.status != RunStatus.COMPLETED:
+        if run.status != RunStatus.COMPLETED and not (ready_only and run.status == RunStatus.AWAITING_INPUT):
             raise RunArtifactsUnavailableError(
                 f"Run {run_id} artifacts are unavailable while its status is "
                 f"{run.status.value}"
             )
 
         artifacts = self.enumerate_run_artifacts(run, kind)
+        if kind == RunArtifactKind.OUTPUT_ANALYSIS and any(
+            module.name == "HumanCalculator" for module in run.modules.get(ModuleType.OutputAnalyser, [])
+        ):
+            from plc_platform_backend.listening_studies.studies_repository import get_listening_studies_repository
+            studies = await get_listening_studies_repository().for_run(run_id)
+            if not studies:
+                raise RunArtifactsUnavailableError("Human study metadata is unavailable")
+            prepared_sources = {
+                Path(source.source_path).resolve(): (study, source)
+                for study in studies for source in study.sources
+            }
+            ready_artifacts = []
+            for artifact in artifacts:
+                entry = prepared_sources.get(artifact.source_path.resolve())
+                if entry is None:
+                    if artifact.source_path.stem.startswith("HumanCalculator-"):
+                        raise RunArtifactsUnavailableError("Human output provenance is unavailable")
+                    ready_artifacts.append(artifact)
+                    continue
+                study, source = entry
+                final_path = study.finalized_outputs.get(source.node_id)
+                if final_path is None:
+                    if ready_only:
+                        continue
+                    raise RunArtifactsUnavailableError("Human outputs have not been finalized")
+                ready_artifacts.append(RunArtifact(Path(final_path), artifact.archive_path, "file"))
+            for study in studies:
+                if study.finalized_directory is not None:
+                    for name in ("results.json", "responses.json", "definition.json", "sessions.json"):
+                        ready_artifacts.append(RunArtifact(
+                            Path(study.finalized_directory) / name,
+                            f"listening-studies/{study.id}/{name}", "file",
+                        ))
+            artifacts = ready_artifacts
         missing = [
             artifact.archive_path
             for artifact in artifacts
@@ -1019,6 +1098,22 @@ class RunsService:
     ) -> list[RunConfigValidationError]:
         errors: list[RunConfigValidationError] = []
         validator = ModuleConfigValidator(modules_service)
+        human_count = sum(
+            module.name == "HumanCalculator"
+            for module in modules.get(ModuleType.OutputAnalyser, [])
+        )
+        if human_count > 1:
+            errors.append(RunConfigValidationError(
+                module_type=ModuleType.OutputAnalyser.value,
+                module_name="HumanCalculator",
+                error="A run supports at most one HumanCalculator instance.",
+            ))
+        if human_count and len(modules.get(ModuleType.PacketLossSimulator, [])) != 1:
+            errors.append(RunConfigValidationError(
+                module_type=ModuleType.PacketLossSimulator.value,
+                module_name="PacketLossSimulator",
+                error="Runs with HumanCalculator require exactly one loss simulator instance.",
+            ))
 
         for module_type, module_list in (modules or {}).items():
             available = modules_service.get_all_modules_by_type(module_type)

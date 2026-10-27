@@ -72,6 +72,34 @@ Production images target **`linux/amd64`**. They are consumed by the [OpenPLC St
 
 The image build runs `plctestbench-docs build --strict --profile embedded` against the locked package version and copies only the generated static site into the runtime image. This profile uses the application-specific introduction and excludes the standalone package introduction, getting-started pages, and repository links. Set `PLCTESTBENCH_DOCS_DIRECTORY` only when serving a site from a non-default location. If the site is missing, only the documentation route returns `503`; the API continues to start normally. In the local Compose workflow, rebuild the backend image after changing documentation sources; restarting the API does not regenerate the site.
 
+## Listening audio loading limits
+
+Set these environment variables **identically on the API and workers**:
+
+| Variable | Default | Valid range | Meaning |
+| --- | --- | --- | --- |
+| `LISTENING_AUDIO_BUDGET_MIB` | `256` | `1`–`1024` | Decoded float32 audio retained for one listening trial. |
+| `LISTENING_AUDIO_TIMEOUT_SECONDS` | `120` | `5`–`600` | Loading timeout per audio file. |
+
+Study preparation checks the actual prepared sample/channel counts before
+publishing material or allowing invitations. The explicit/hidden reference is
+counted once, alongside every PLC condition and the anchor; different tracks and
+repetitions are not summed. An oversized trial fails the run with required and
+allowed sizes plus actionable guidance in run progress.
+
+The same limits are delivered to the player in participant checkpoints, including
+existing studies and invitations. Browser guards remain active; no audio is
+silently cropped or downmixed. Device resampling may increase actual decoded
+size. Decoding, downloads and browser overhead need memory **in addition** to the
+retained-audio budget. Increasing it does not guarantee playback on every device.
+
+For local Compose, optionally add the variables to the root `dev.env`, then run
+`make restart` (when no computation is running) and refresh the participant page.
+Both services receive the variables through the common Compose environment.
+No dependency/image rebuild or existing-study regeneration is needed for this
+source-only change. A plain `docker compose restart` does not apply changed
+container environment values; recreate the containers after changing them.
+
 ## Repository layout
 
 ```text

@@ -12,6 +12,7 @@ from plc_platform_backend.runs.runs_models import (
     Run,
     RunCreateDto,
     RunDocument,
+    RunFailure,
     RunSortField,
     RunStatus,
     SortDirection,
@@ -86,7 +87,7 @@ class RunsRepository(BaseMongoDBRepository):
     async def get_dashboard_snapshot(
         self, cutoff: datetime, limit: int
     ) -> dict:
-        active_statuses = [RunStatus.QUEUED.value, RunStatus.RUNNING.value]
+        active_statuses = [RunStatus.QUEUED.value, RunStatus.RUNNING.value, RunStatus.AWAITING_INPUT.value]
         terminal_statuses = [RunStatus.COMPLETED.value, RunStatus.FAILED.value]
         pipeline = [
             {
@@ -193,13 +194,15 @@ class RunsRepository(BaseMongoDBRepository):
         run_id: str,
         expected_status: RunStatus,
         new_status: RunStatus,
+        *, failure: RunFailure | None = None,
     ) -> RunDocument | None:
         if not ObjectId.is_valid(run_id):
             return None
 
         run_data = await self.collection.find_one_and_update(
             {"_id": ObjectId(run_id), "status": expected_status.value},
-            {"$set": {"status": new_status.value, "updated": datetime.utcnow()}},
+            {"$set": {"status": new_status.value, "updated": datetime.utcnow(),
+                      "failure": failure.model_dump() if failure else None}},
             return_document=ReturnDocument.AFTER,
         )
         return RunDocument(**run_data) if run_data else None
